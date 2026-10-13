@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Session, type Studio, type StudioMember } from "../lib/api";
-import { Badge, Button, Card, Input, Select, Textarea, statusTone } from "../components/ui";
+import { Badge, Button, Card, Input, Modal, Select, Textarea, statusTone } from "../components/ui";
+import { PencilIcon } from "../components/icons";
 
 export function StudioPage() {
   const { studioId } = useParams<{ studioId: string }>();
@@ -17,6 +18,7 @@ export function StudioPage() {
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -86,6 +88,11 @@ export function StudioPage() {
     setSettingsError(null);
   };
 
+  const openSettings = () => {
+    startEditing();
+    setSettingsOpen(true);
+  };
+
   const saveSettings = async () => {
     if (!editName.trim()) return;
     setSavingSettings(true);
@@ -96,6 +103,7 @@ export function StudioPage() {
         body: { name: editName.trim(), description: editDescription.trim() },
       });
       setStudio(res.studio);
+      setSettingsOpen(false);
     } catch (err) {
       setSettingsError(err instanceof Error ? err.message : "Could not save studio settings");
     } finally {
@@ -133,7 +141,20 @@ export function StudioPage() {
       </header>
 
       <main className="mx-auto max-w-5xl p-6">
-        <h2 className="text-2xl font-bold tracking-tight">{studio.name}</h2>
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-2xl font-bold tracking-tight">{studio.name}</h2>
+          {myRole === "owner" && (
+            <Button
+              variant="ghost"
+              className="!px-2.5 !py-1.5 !text-xs"
+              title="Rename, edit description or delete this studio"
+              onClick={openSettings}
+            >
+              <PencilIcon className="mr-1 inline h-3.5 w-3.5" />
+              Edit
+            </Button>
+          )}
+        </div>
         {studio.description && (
           <p className="mt-2 max-w-2xl whitespace-pre-line text-sm text-gray-400">{studio.description}</p>
         )}
@@ -204,42 +225,47 @@ export function StudioPage() {
           {sessionError && <p className="text-sm text-rec">{sessionError}</p>}
         </div>
 
-        {/* Studio settings (owners) */}
-        {myRole === "owner" && (
-          <Card className="mt-8 !rounded-2xl !border-0 !bg-panel ring-1 ring-edge">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
-              Studio settings
-            </h3>
-            <div className="mt-3 flex flex-col gap-3">
-              <Input
-                placeholder="Studio name"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-              />
-              <Textarea
-                rows={3}
-                placeholder="What is this studio for? (shown on the dashboard)"
-                value={editDescription}
-                onChange={(e) => setEditDescription(e.target.value)}
-              />
-              <div className="flex flex-wrap items-center gap-2">
-                <Button onClick={() => void saveSettings()} disabled={savingSettings || !editName.trim()}>
-                  Save changes
-                </Button>
-                <Button variant="ghost" onClick={startEditing}>
-                  Reset
-                </Button>
-                <span className="grow" />
-                <Button variant="danger" onClick={() => void deleteStudio()}>
-                  Delete studio
-                </Button>
-              </div>
-              {settingsError && <p className="text-sm text-rec">{settingsError}</p>}
-              <p className="text-xs text-gray-500">
-                Deleting removes all sessions, recordings, tracks and exports — there is no undo.
-              </p>
+        {/* Studio settings dialog (owners) */}
+        {myRole === "owner" && settingsOpen && (
+          <Modal title="Studio settings" onClose={() => setSettingsOpen(false)}>
+            <label htmlFor="studio-name" className="text-xs font-medium text-gray-400">
+              Name
+            </label>
+            <Input
+              id="studio-name"
+              autoFocus
+              placeholder="Studio name"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void saveSettings()}
+            />
+            <label htmlFor="studio-description" className="text-xs font-medium text-gray-400">
+              Description
+            </label>
+            <Textarea
+              id="studio-description"
+              rows={3}
+              placeholder="What is this studio for? (shown on the dashboard)"
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => void saveSettings()} disabled={savingSettings || !editName.trim()}>
+                Save
+              </Button>
+              <Button variant="ghost" onClick={() => setSettingsOpen(false)}>
+                Cancel
+              </Button>
+              <span className="grow" />
+              <Button variant="danger" onClick={() => void deleteStudio()}>
+                Delete studio
+              </Button>
             </div>
-          </Card>
+            {settingsError && <p className="text-sm text-rec">{settingsError}</p>}
+            <p className="text-xs text-gray-500">
+              Deleting removes all sessions, recordings, tracks and exports — there is no undo.
+            </p>
+          </Modal>
         )}
 
         {/* Team */}

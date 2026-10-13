@@ -10,7 +10,8 @@ import {
   type TranscriptSegment,
   type TranscriptSummary,
 } from "../lib/api";
-import { Badge, Button, Card, Input, formatBytes, formatDuration, statusTone } from "../components/ui";
+import { Badge, Button, Card, Input, Modal, formatBytes, formatDuration, statusTone } from "../components/ui";
+import { PencilIcon } from "../components/icons";
 
 const ACTIVE_STATES = ["recording", "uploading", "uploaded", "processing", "queued"];
 
@@ -52,7 +53,8 @@ export function SessionDetailPage() {
   const [exports, setExports] = useState<ExportItem[]>([]);
   const [transcripts, setTranscripts] = useState<TranscriptSummary[]>([]);
   const [openTranscripts, setOpenTranscripts] = useState<Set<string>>(new Set());
-  const [editTitle, setEditTitle] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -78,11 +80,6 @@ export function SessionDetailPage() {
     void load();
   }, [load]);
 
-  // Seed the title editor once, so polling refreshes don't clobber typing.
-  useEffect(() => {
-    if (session && editTitle === null) setEditTitle(session.title);
-  }, [session, editTitle]);
-
   // Poll while anything is in flight
   const anythingActive =
     tracks.some((t) => ACTIVE_STATES.includes(t.status)) ||
@@ -105,8 +102,14 @@ export function SessionDetailPage() {
     await load();
   };
 
+  const openSettings = () => {
+    setEditTitle(session?.title ?? "");
+    setSettingsError(null);
+    setSettingsOpen(true);
+  };
+
   const saveTitle = async () => {
-    if (editTitle === null || !editTitle.trim()) return;
+    if (!editTitle.trim()) return;
     setSavingSettings(true);
     setSettingsError(null);
     try {
@@ -114,6 +117,7 @@ export function SessionDetailPage() {
         method: "PATCH",
         body: { title: editTitle.trim() },
       });
+      setSettingsOpen(false);
       await load();
     } catch (err) {
       setSettingsError(err instanceof Error ? err.message : "Could not rename the session");
@@ -157,7 +161,18 @@ export function SessionDetailPage() {
       <main className="mx-auto max-w-5xl p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-2xl font-bold tracking-tight">{session.title}</h2>
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="text-2xl font-bold tracking-tight">{session.title}</h2>
+              <Button
+                variant="ghost"
+                className="!px-2.5 !py-1.5 !text-xs"
+                title="Rename or delete this session"
+                onClick={openSettings}
+              >
+                <PencilIcon className="mr-1 inline h-3.5 w-3.5" />
+                Edit
+              </Button>
+            </div>
             <div className="mt-1 flex items-center gap-2 text-sm text-gray-400">
               <Badge tone={statusTone(session.status)}>{session.status}</Badge>
               <span>{new Date(session.created_at).toLocaleString()}</span>
@@ -217,37 +232,41 @@ export function SessionDetailPage() {
           </label>
         </div>
 
-        {/* Session settings */}
-        <Card className="mt-6 !rounded-2xl !border-0 !bg-panel ring-1 ring-edge">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
-            Session settings
-          </h2>
-          <div className="mt-3 flex flex-col gap-3">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                placeholder="Session title"
-                value={editTitle ?? ""}
-                onChange={(e) => setEditTitle(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && void saveTitle()}
-              />
+        {/* Session settings dialog */}
+        {settingsOpen && (
+          <Modal title="Session settings" onClose={() => setSettingsOpen(false)}>
+            <label htmlFor="session-title" className="text-xs font-medium text-gray-400">
+              Title
+            </label>
+            <Input
+              id="session-title"
+              autoFocus
+              placeholder="Session title"
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void saveTitle()}
+            />
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 onClick={() => void saveTitle()}
-                disabled={savingSettings || !editTitle?.trim() || editTitle === session.title}
+                disabled={savingSettings || !editTitle.trim() || editTitle === session.title}
               >
                 Rename
               </Button>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="ghost" onClick={() => setSettingsOpen(false)}>
+                Cancel
+              </Button>
+              <span className="grow" />
               <Button variant="danger" onClick={() => void deleteSession()}>
                 Delete session
               </Button>
-              <span className="text-xs text-gray-500">
-                Deleting removes all recordings, tracks and exports — there is no undo.
-              </span>
             </div>
             {settingsError && <p className="text-sm text-rec">{settingsError}</p>}
-          </div>
-        </Card>
+            <p className="text-xs text-gray-500">
+              Deleting removes all recordings, tracks and exports — there is no undo.
+            </p>
+          </Modal>
+        )}
 
         {participants.length > 0 && (
           <Card className="mt-6 !rounded-2xl !border-0 !bg-panel ring-1 ring-edge">

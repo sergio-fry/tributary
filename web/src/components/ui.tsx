@@ -1,7 +1,7 @@
+import { useEffect, type ReactNode } from "react";
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
-  ReactNode,
   TextareaHTMLAttributes,
 } from "react";
 
@@ -72,6 +72,52 @@ export function Select({
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <div className={`rounded-xl bg-panel border border-edge p-5 ${className}`}>{children}</div>
+  );
+}
+
+export function Modal({
+  title,
+  onClose,
+  children,
+}: {
+  title: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 sm:p-6"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="w-full max-w-md rounded-2xl border border-edge bg-panel p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-4">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-500">{title}</h3>
+          <button
+            className="rounded-md p-1 text-gray-500 hover:bg-edge hover:text-white"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+        <div className="mt-4 flex flex-col gap-3">{children}</div>
+      </div>
+    </div>
   );
 }
 

@@ -112,6 +112,15 @@ export function PauseIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function PencilIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17v3Z" />
+      <path d="M13.5 6.5l3 3" />
+    </svg>
+  );
+}
+
 export function UploadIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base(props)}>
