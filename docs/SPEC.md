@@ -80,6 +80,8 @@ server (Fastify + better-sqlite3, single process)
  ├─ REST API    auth, studios, sessions, invites, recording control, tracks, chunks, exports
  ├─ WS /ws      rooms: presence, WebRTC signal relay, chat, state, upload progress, clock ping
  ├─ jobs        in-process queue → ffmpeg: assemble/probe/remux/wav/mixed-export
+ │              job state is durable (DB rows): restart re-queues interrupted
+ │              work, failed attempts retry with backoff before parking as failed
  └─ storage     local disk under data/ (chunks/, media/, exports/) — swappable for S3 later
 ```
 
@@ -100,6 +102,10 @@ each track. The mixer delays each track by its offset. Waveform alignment is a f
   uploads the difference, then finalizes.
 - Finalize declares `final_chunk_count`; server marks a track `uploaded` only when all chunks are
   present, then queues processing.
+- Processing is restart-safe: track/export/transcript rows carry status + attempts in SQLite; on
+  boot the server re-queues every non-terminal job (all jobs are idempotent — assembly is skipped
+  when the assembled raw file exists, ffmpeg runs with -y). Failed attempts retry with backoff
+  (3 by default) before the job parks as `failed` for a manual retry.
 
 ## 4. Data model
 
@@ -108,7 +114,8 @@ bearer token), recordings (one per record start/stop "take", authoritative times
 tracks (recording_id, participant_id, type camera|screen, mime, status, start_offset_ms,
 final_chunk_count), chunks (track_id, idx, size), exports (mixed_video|mixed_audio per recording).
 
-Track status: `recording → uploading → uploaded → processing → ready | failed`.
+Track status: `recording → uploading → uploaded → processing → ready | failed` (failed attempts
+re-queue as `uploaded` while retrying).
 
 ## 5. Quality presets
 

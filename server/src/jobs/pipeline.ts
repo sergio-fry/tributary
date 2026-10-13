@@ -28,7 +28,7 @@ import {
   type KeepWindow,
   type MixInput,
 } from "./ffmpeg.js";
-import { renderTranscript } from "./transcribe.js";
+import { renderTranscript, transcribeRecording } from "./transcribe.js";
 import type { TranscriptSegment } from "../lib/db.js";
 
 const ASPECT_SIZES: Record<string, { w: number; h: number }> = {
@@ -106,6 +106,11 @@ export function computeKeepWindows(
 }
 
 // ---- Tiny in-process job queue (concurrency 2) ----
+//
+// The queue itself is volatile, but every job's state is durable — tracks /
+// exports / transcripts rows carry a status column — so a restart can
+// re-enqueue anything non-terminal (recoverInterruptedJobs) and failed
+// attempts can be retried with backoff instead of parking right away.
 
 type Job = () => Promise<void>;
 const queue: Job[] = [];
@@ -121,13 +126,39 @@ function pump(): void {
   while (running < CONCURRENCY && queue.length > 0) {
     const job = queue.shift()!;
     running++;
-    job()
+    Promise.resolve()
+      .then(job)
       .catch((err) => console.error("[jobs] job failed:", err))
       .finally(() => {
         running--;
         pump();
       });
   }
+}
+
+/** Failed attempts before a job parks as failed. */
+export const MAX_JOB_ATTEMPTS = Number(process.env.TRIBUTARY_JOB_MAX_ATTEMPTS ?? 3);
+/** First retry delay; grows ×4 per attempt (30s, 2m, 8m by default). */
+const RETRY_BASE_MS = Number(process.env.TRIBUTARY_JOB_RETRY_BASE_MS ?? 30_000);
+
+/** Record one failed attempt on the job's row; returns the attempt number. */
+export function countJobAttempt(
+  table: "tracks" | "exports" | "transcripts",
+  id: string
+): number {
+  db.prepare(`UPDATE ${table} SET attempts = attempts + 1 WHERE id = ?`).run(id);
+  const row = db.prepare(`SELECT attempts FROM ${table} WHERE id = ?`).get(id) as
+    | { attempts: number }
+    | undefined;
+  return row?.attempts ?? 1;
+}
+
+/**
+ * Re-queue a failed job after a backoff delay. If the process dies while
+ * waiting, restart recovery re-enqueues the job immediately instead.
+ */
+export function scheduleJobRetry(attempt: number, job: Job): void {
+  setTimeout(() => enqueue(job), RETRY_BASE_MS * 4 ** (attempt - 1)).unref();
 }
 
 // ---- Track upload completion → processing ----
@@ -169,10 +200,25 @@ async function processTrack(trackId: string): Promise<void> {
     const rawPath = rawTrackPath(trackId, ext);
 
     // Concatenate MediaRecorder chunks in order — a valid continuous stream.
-    // Skip if already assembled (reprocess after chunk GC reuses the raw file).
-    if (!fs.existsSync(rawPath) || fs.statSync(rawPath).size === 0) {
+    // Skip if already assembled (reprocess after chunk GC reuses the raw file),
+    // but only when it matches the byte count of the chunks we still have —
+    // an interrupted run must never leave a trusted-but-partial raw file.
+    const chunkBytes = (
+      db.prepare("SELECT SUM(size_bytes) AS n FROM chunks WHERE track_id = ?").get(trackId) as {
+        n: number | null;
+      }
+    ).n;
+    const rawOk =
+      fs.existsSync(rawPath) &&
+      fs.statSync(rawPath).size > 0 &&
+      (chunkBytes === null || chunkBytes === 0 || fs.statSync(rawPath).size === chunkBytes);
+    if (!rawOk) {
       const count = track.final_chunk_count ?? 0;
-      const out = fs.createWriteStream(rawPath);
+      // Assemble into a temp file and rename at the end: a crash mid-concat
+      // must not leave a partial raw file that this skip-check would trust.
+      const tmpPath = `${rawPath}.tmp`;
+      fs.rmSync(tmpPath, { force: true });
+      const out = fs.createWriteStream(tmpPath);
       for (let i = 0; i < count; i++) {
         await new Promise<void>((resolve, reject) => {
           const read = fs.createReadStream(chunkPath(trackId, i));
@@ -185,6 +231,7 @@ async function processTrack(trackId: string): Promise<void> {
         out.on("error", reject);
         out.end(resolve);
       });
+      fs.renameSync(tmpPath, rawPath);
     }
 
     let durationMs = track.duration_ms;
@@ -223,7 +270,7 @@ async function processTrack(trackId: string): Promise<void> {
     }
 
     db.prepare(
-      "UPDATE tracks SET status = 'ready', duration_ms = ?, width = ?, height = ?, error = NULL WHERE id = ?"
+      "UPDATE tracks SET status = 'ready', duration_ms = ?, width = ?, height = ?, error = NULL, attempts = 0 WHERE id = ?"
     ).run(durationMs ?? null, width, height, trackId);
     notifyTrack(track.session_id, trackId, "ready");
 
@@ -233,11 +280,24 @@ async function processTrack(trackId: string): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[jobs] track ${trackId} processing failed:`, message);
-    db.prepare("UPDATE tracks SET status = 'failed', error = ? WHERE id = ?").run(
-      message.slice(0, 2000),
-      trackId
-    );
-    notifyTrack(track.session_id, trackId, "failed");
+    const attempts = countJobAttempt("tracks", trackId);
+    if (attempts <= MAX_JOB_ATTEMPTS) {
+      console.warn(`[jobs] track ${trackId}: attempt ${attempts}/${MAX_JOB_ATTEMPTS} failed, will retry`);
+      // Back to the natural "queued" state; recovery picks it up if the
+      // process dies before the retry fires.
+      db.prepare("UPDATE tracks SET status = 'uploaded', error = ? WHERE id = ?").run(
+        `attempt ${attempts}: ${message}`.slice(0, 2000),
+        trackId
+      );
+      notifyTrack(track.session_id, trackId, "uploaded");
+      scheduleJobRetry(attempts, () => processTrack(trackId));
+    } else {
+      db.prepare("UPDATE tracks SET status = 'failed', error = ? WHERE id = ?").run(
+        message.slice(0, 2000),
+        trackId
+      );
+      notifyTrack(track.session_id, trackId, "failed");
+    }
   }
   checkRecordingComplete(track.recording_id);
 }
@@ -262,6 +322,10 @@ export function queueEnhanceTrack(trackId: string): boolean {
 export function reprocessTrack(trackId: string): boolean {
   const track = getTrack(trackId);
   if (!track || track.final_chunk_count === null) return false;
+  db.prepare("UPDATE tracks SET status = 'uploaded', attempts = 0, error = NULL WHERE id = ?").run(
+    trackId
+  );
+  notifyTrack(track.session_id, trackId, "uploaded");
   enqueue(() => processTrack(trackId));
   return true;
 }
@@ -291,6 +355,11 @@ export function checkRecordingComplete(recordingId: string): void {
 
 export function queueMixedExport(exportRow: ExportRow): void {
   enqueue(() => renderExport(exportRow.id));
+}
+
+/** Enqueue an export by id — used by restart recovery. */
+export function queueExportById(exportId: string): void {
+  enqueue(() => renderExport(exportId));
 }
 
 async function renderExport(exportId: string): Promise<void> {
@@ -381,16 +450,72 @@ async function renderExport(exportId: string): Promise<void> {
     }
     const size = fs.statSync(outPath).size;
     db.prepare(
-      "UPDATE exports SET status = 'ready', size_bytes = ?, duration_ms = ?, error = NULL WHERE id = ?"
+      "UPDATE exports SET status = 'ready', size_bytes = ?, duration_ms = ?, error = NULL, attempts = 0 WHERE id = ?"
     ).run(size, outputDurationMs, exportId);
     broadcast(exp.session_id, { t: "export-status", exportId, status: "ready" });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[jobs] export ${exportId} failed:`, message);
-    db.prepare("UPDATE exports SET status = 'failed', error = ? WHERE id = ?").run(
-      message.slice(0, 2000),
-      exportId
+    const attempts = countJobAttempt("exports", exportId);
+    if (attempts <= MAX_JOB_ATTEMPTS) {
+      console.warn(`[jobs] export ${exportId}: attempt ${attempts}/${MAX_JOB_ATTEMPTS} failed, will retry`);
+      // Common case: export queued while tracks are still processing — the
+      // backoff retries outlive them and the render succeeds later.
+      db.prepare("UPDATE exports SET status = 'queued', error = ? WHERE id = ?").run(
+        `attempt ${attempts}: ${message}`.slice(0, 2000),
+        exportId
+      );
+      broadcast(exp.session_id, { t: "export-status", exportId, status: "queued" });
+      scheduleJobRetry(attempts, () => renderExport(exportId));
+    } else {
+      db.prepare("UPDATE exports SET status = 'failed', error = ? WHERE id = ?").run(
+        message.slice(0, 2000),
+        exportId
+      );
+      broadcast(exp.session_id, { t: "export-status", exportId, status: "failed" });
+    }
+  }
+}
+
+// ---- Restart recovery ----
+
+/**
+ * The job queue is in-process, but job state is durable in SQLite. On boot,
+ * re-enqueue every non-terminal job so a deploy or crash mid-processing
+ * doesn't strand it in "processing" forever. Jobs are idempotent: assembly
+ * is skipped when the assembled raw file exists, ffmpeg runs with -y, and
+ * statuses are re-derived from the database. A "processing" row at boot is
+ * stale by definition — only this process could have been working on it.
+ */
+export function recoverInterruptedJobs(): void {
+  const stuckTracks = db
+    .prepare(
+      "SELECT id FROM tracks WHERE status IN ('uploaded', 'processing') AND final_chunk_count IS NOT NULL"
+    )
+    .all() as { id: string }[];
+  for (const { id } of stuckTracks) enqueue(() => processTrack(id));
+
+  const stuckExports = db
+    .prepare("SELECT id FROM exports WHERE status IN ('queued', 'processing')")
+    .all() as { id: string }[];
+  for (const { id } of stuckExports) queueExportById(id);
+
+  const stuckTranscripts = db
+    .prepare("SELECT id FROM transcripts WHERE status IN ('queued', 'processing')")
+    .all() as { id: string }[];
+  for (const { id } of stuckTranscripts) enqueue(() => transcribeRecording(id));
+
+  // Re-settle recording statuses in case a crash ate the final check.
+  const openRecordings = db
+    .prepare("SELECT id FROM recordings WHERE status NOT IN ('ready', 'failed')")
+    .all() as { id: string }[];
+  for (const { id } of openRecordings) checkRecordingComplete(id);
+
+  const recovered = stuckTracks.length + stuckExports.length + stuckTranscripts.length;
+  if (recovered > 0) {
+    console.log(
+      `[jobs] restart recovery: re-queued ${recovered} interrupted job(s) ` +
+        `(${stuckTracks.length} tracks, ${stuckExports.length} exports, ${stuckTranscripts.length} transcripts)`
     );
-    broadcast(exp.session_id, { t: "export-status", exportId, status: "failed" });
   }
 }

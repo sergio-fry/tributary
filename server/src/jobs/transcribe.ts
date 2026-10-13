@@ -13,7 +13,7 @@ import {
 import { newId } from "../lib/ids.js";
 import { DATA_DIR, wavTrackPath } from "../lib/storage.js";
 import { broadcast } from "../lib/rooms.js";
-import { enqueue } from "./pipeline.js";
+import { enqueue, MAX_JOB_ATTEMPTS, countJobAttempt, scheduleJobRetry } from "./pipeline.js";
 
 const WHISPER_CLI = process.env.WHISPER_CLI ?? "whisper-cli";
 const MODEL_PATH =
@@ -73,7 +73,8 @@ export function queueTranscription(recordingId: string, sessionId: string): Tran
   return row;
 }
 
-async function transcribeRecording(transcriptId: string): Promise<void> {
+/** Transcribe one recording; exported so restart recovery can re-enqueue it. */
+export async function transcribeRecording(transcriptId: string): Promise<void> {
   const transcript = db
     .prepare("SELECT * FROM transcripts WHERE id = ?")
     .get(transcriptId) as TranscriptRow | undefined;
@@ -166,6 +167,7 @@ async function transcribeRecording(transcriptId: string): Promise<void> {
       segments_json: JSON.stringify(allSegments),
       words_json: JSON.stringify(allWords),
       error: null,
+      attempts: 0,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -173,7 +175,16 @@ async function transcribeRecording(transcriptId: string): Promise<void> {
     const hint = message.includes("ENOENT")
       ? " (is whisper-cli installed? `brew install whisper-cpp`)"
       : "";
-    update({ status: "failed", error: (message + hint).slice(0, 2000) });
+    const attempts = countJobAttempt("transcripts", transcriptId);
+    if (attempts <= MAX_JOB_ATTEMPTS) {
+      console.warn(
+        `[transcribe] ${transcriptId}: attempt ${attempts}/${MAX_JOB_ATTEMPTS} failed, will retry`
+      );
+      update({ status: "queued", error: `attempt ${attempts}: ${message}`.slice(0, 2000) });
+      scheduleJobRetry(attempts, () => transcribeRecording(transcriptId));
+    } else {
+      update({ status: "failed", error: (message + hint).slice(0, 2000) });
+    }
   }
 }
 

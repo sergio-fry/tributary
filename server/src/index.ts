@@ -14,6 +14,7 @@ import { registerTrackRoutes } from "./routes/tracks.js";
 import { registerMediaRoutes } from "./routes/media.js";
 import { registerWsRoutes } from "./routes/ws.js";
 import { registerWatchRoutes } from "./routes/watch.js";
+import { recoverInterruptedJobs } from "./jobs/pipeline.js";
 import { livekitConfig, mintLivekitToken } from "./lib/livekit.js";
 import { participantFromRequest } from "./lib/auth.js";
 
@@ -97,7 +98,12 @@ if (fs.existsSync(webDist)) {
 
 app
   .listen({ port: PORT, host: "0.0.0.0" })
-  .then(() => console.log(`Tributary server listening on http://localhost:${PORT}`))
+  .then(() => {
+    console.log(`Tributary server listening on http://localhost:${PORT}`);
+    // Re-queue tracks/exports/transcripts interrupted by a restart or crash
+    // so "processing" never hangs forever after a deploy.
+    recoverInterruptedJobs();
+  })
   .catch((err) => {
     console.error(err);
     process.exit(1);

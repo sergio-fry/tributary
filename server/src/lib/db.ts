@@ -116,6 +116,9 @@ for (const migration of [
   "ALTER TABLE sessions ADD COLUMN watch_token TEXT",
   "ALTER TABLE tracks ADD COLUMN enhanced INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE studios ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE tracks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE exports ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE transcripts ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
 ]) {
   try {
     db.exec(migration);
@@ -224,6 +227,8 @@ export type TrackRow = {
   error: string | null;
   created_at: number;
   enhanced?: number;
+  /** Failed processing attempts; reset on success and manual retry. */
+  attempts?: number;
 };
 
 export type TranscriptSegment = {
@@ -253,6 +258,8 @@ export type TranscriptRow = {
   words_json?: string | null;
   error: string | null;
   created_at: number;
+  /** Failed transcription attempts; reset on success. */
+  attempts?: number;
 };
 
 export type ExportParams = {
@@ -278,4 +285,6 @@ export type ExportRow = {
   error: string | null;
   created_at: number;
   params_json?: string | null;
+  /** Failed render attempts; reset on success. */
+  attempts?: number;
 };
