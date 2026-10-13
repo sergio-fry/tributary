@@ -48,7 +48,8 @@ prior GPT-5.5 reference spec (`docs/reference/riverside-core-functionality-spec.
 3. Lobby: name entry, camera/mic/speaker pickers, live preview, mic level meter, echo-cancellation
    (headphones) toggle.
 4. Live studio room: mesh WebRTC call (host + up to ~5 guests), tiles with mute/camera state,
-   screen share, text chat, presence.
+   screen share, text chat, presence, in-room camera/microphone switching (also mid-recording:
+   the local recording continues as a new segment and segments are stitched in post-production).
 5. Recording control: host starts/stops; server issues the authoritative start timestamp and
    broadcasts to all clients; optional per-client clock-offset estimation via WS ping.
 6. Local recording per participant: MediaRecorder (webm/vp8+opus preferred, runtime codec

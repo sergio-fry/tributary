@@ -52,6 +52,7 @@ export function HostRoomPage() {
         preset: lobbyResult.settings.preset,
         recordWav: lobbyResult.settings.recordWav,
         cameraStream: lobbyResult.stream,
+        settings: lobbyResult.settings,
       }}
       sessionTitle={joinInfo.session.title}
       onLeave={() => navigate(`/sessions/${sessionId}`)}

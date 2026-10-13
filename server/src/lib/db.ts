@@ -105,29 +105,8 @@ CREATE TABLE IF NOT EXISTS exports (
 CREATE INDEX IF NOT EXISTS idx_sessions_studio ON sessions(studio_id);
 `);
 
-// Additive migrations for databases created before these columns existed.
-for (const migration of [
-  "ALTER TABLE sessions ADD COLUMN auto_record INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE sessions ADD COLUMN waiting_room INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE sessions ADD COLUMN teleprompter_script TEXT",
-  "ALTER TABLE participants ADD COLUMN admitted_at INTEGER",
-  "ALTER TABLE exports ADD COLUMN params_json TEXT",
-  "ALTER TABLE transcripts ADD COLUMN words_json TEXT",
-  "ALTER TABLE sessions ADD COLUMN watch_token TEXT",
-  "ALTER TABLE tracks ADD COLUMN enhanced INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE studios ADD COLUMN description TEXT NOT NULL DEFAULT ''",
-  "ALTER TABLE tracks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE exports ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE transcripts ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
-]) {
-  try {
-    db.exec(migration);
-  } catch {
-    // column already exists
-  }
-}
-
-
+// Second half of the schema — must exist before the additive migrations
+// below, or the ALTERs for these tables fail silently on a fresh database.
 db.exec(`
 CREATE INDEX IF NOT EXISTS idx_participants_session ON participants(session_id);
 CREATE INDEX IF NOT EXISTS idx_tracks_recording ON tracks(recording_id);
@@ -153,6 +132,32 @@ CREATE TABLE IF NOT EXISTS transcripts (
   created_at INTEGER NOT NULL
 );
 `);
+
+// Additive migrations for databases created before these columns existed.
+// Run after every CREATE TABLE above: on a fresh database an ALTER for a table
+// that does not exist yet would fail and be swallowed, leaving the column
+// missing (words_json/attempts broke /api/recordings/:id this way).
+for (const migration of [
+  "ALTER TABLE sessions ADD COLUMN auto_record INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE sessions ADD COLUMN waiting_room INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE sessions ADD COLUMN teleprompter_script TEXT",
+  "ALTER TABLE participants ADD COLUMN admitted_at INTEGER",
+  "ALTER TABLE exports ADD COLUMN params_json TEXT",
+  "ALTER TABLE transcripts ADD COLUMN words_json TEXT",
+  "ALTER TABLE sessions ADD COLUMN watch_token TEXT",
+  "ALTER TABLE tracks ADD COLUMN enhanced INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE studios ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE tracks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE exports ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE transcripts ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+]) {
+  try {
+    db.exec(migration);
+  } catch {
+    // column already exists
+  }
+}
+
 
 // Backfill: every studio's creator is an owner member (idempotent).
 db.exec(`

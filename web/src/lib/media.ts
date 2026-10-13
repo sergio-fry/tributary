@@ -55,6 +55,25 @@ export function buildConstraints(settings: CaptureSettings): MediaStreamConstrai
 }
 
 /**
+ * Constraints to (re)acquire just one device kind — a mid-session switch must
+ * not touch the other track (it would blink the preview and the recording).
+ */
+export function buildSwitchConstraints(
+  settings: CaptureSettings,
+  kind: "audio" | "video",
+  deviceId: string
+): MediaStreamConstraints {
+  const full = buildConstraints({
+    ...settings,
+    cameraId: kind === "video" ? deviceId : settings.cameraId,
+    microphoneId: kind === "audio" ? deviceId : settings.microphoneId,
+  });
+  return kind === "audio"
+    ? { audio: full.audio as MediaTrackConstraints, video: false }
+    : { audio: false, video: full.video };
+}
+
+/**
  * Shared AudioContext for level meters. Browsers cap the number of contexts per
  * page (~6 in Chrome), so one meter per video tile must not create its own.
  */

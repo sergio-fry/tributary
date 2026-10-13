@@ -71,7 +71,10 @@ export function VideoTile({
   const clipTimer = useRef<number>(0);
 
   // Live sound level for this participant (local stream or remote WebRTC one).
-  const hasAudio = !!stream && stream.getAudioTracks().length > 0;
+  // Keyed on the audio track identity: mid-session device switches replace the
+  // track inside the same MediaStream, and the meter must rebind to it.
+  const audioTrack = stream?.getAudioTracks()[0] ?? null;
+  const hasAudio = !!audioTrack;
   useEffect(() => {
     if (!stream || !hasAudio || micOn === false) {
       setMeter(null);
@@ -102,7 +105,7 @@ export function VideoTile({
       stop();
       window.clearTimeout(clipTimer.current);
     };
-  }, [stream, hasAudio, micOn]);
+  }, [stream, audioTrack, hasAudio, micOn]);
 
   const attachVideo = (el: HTMLVideoElement | null) => {
     videoRef.current = el;

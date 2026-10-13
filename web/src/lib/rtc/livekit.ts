@@ -20,6 +20,7 @@ export class LiveKitManager {
   private url: string;
   private cameraStream: MediaStream | null = null;
   private screenStream: MediaStream | null = null;
+  private publishedCameraTracks = new Set<MediaStreamTrack>();
   private media = new Map<string, RemoteMedia>();
   private onMediaChange: (participantId: string, media: RemoteMedia) => void;
 
@@ -57,10 +58,14 @@ export class LiveKitManager {
   private async publishStreams(): Promise<void> {
     if (this.cameraStream) {
       for (const track of this.cameraStream.getVideoTracks()) {
+        if (this.publishedCameraTracks.has(track)) continue;
         await this.room.localParticipant.publishTrack(track, { source: Track.Source.Camera });
+        this.publishedCameraTracks.add(track);
       }
       for (const track of this.cameraStream.getAudioTracks()) {
+        if (this.publishedCameraTracks.has(track)) continue;
         await this.room.localParticipant.publishTrack(track, { source: Track.Source.Microphone });
+        this.publishedCameraTracks.add(track);
       }
     }
     if (this.screenStream) {
@@ -116,8 +121,23 @@ export class LiveKitManager {
   }
 
   setCameraStream(stream: MediaStream | null): void {
+    const prev = this.cameraStream;
     this.cameraStream = stream;
-    if (this.room.state === "connected") void this.publishStreams();
+    if (this.room.state !== "connected") return;
+    void (async () => {
+      // Unpublish camera/mic tracks that left the stream (device switch)
+      // before publishing the replacement — a source can be published once.
+      if (prev) {
+        const kept = new Set(stream?.getTracks() ?? []);
+        for (const track of prev.getTracks()) {
+          if (!kept.has(track) && this.publishedCameraTracks.has(track)) {
+            this.publishedCameraTracks.delete(track);
+            await this.room.localParticipant.unpublishTrack(track).catch(() => {});
+          }
+        }
+      }
+      await this.publishStreams().catch(() => {});
+    })();
   }
 
   async setScreenStream(stream: MediaStream | null): Promise<void> {

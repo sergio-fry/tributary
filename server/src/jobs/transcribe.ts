@@ -13,6 +13,7 @@ import {
 import { newId } from "../lib/ids.js";
 import { DATA_DIR, wavTrackPath } from "../lib/storage.js";
 import { broadcast } from "../lib/rooms.js";
+import { pickVoiceTracks } from "../lib/voices.js";
 import { enqueue, MAX_JOB_ATTEMPTS, countJobAttempt, scheduleJobRetry } from "./pipeline.js";
 
 const WHISPER_CLI = process.env.WHISPER_CLI ?? "whisper-cli";
@@ -98,7 +99,8 @@ export async function transcribeRecording(transcriptId: string): Promise<void> {
     await ensureModel();
 
     // Speech comes from per-participant mic tracks; screen audio is skipped.
-    // Prefer the uncompressed PCM track when the participant has one.
+    // A participant may have several contiguous voice segments (device
+    // switches) — transcribe each and shift it onto the timeline by offset.
     const candidates = db
       .prepare(
         `SELECT t.*, p.name AS participant_name FROM tracks t
@@ -106,14 +108,7 @@ export async function transcribeRecording(transcriptId: string): Promise<void> {
          WHERE t.recording_id = ? AND t.type IN ('camera', 'pcm') AND t.status = 'ready'`
       )
       .all(transcript.recording_id) as (TrackRow & { participant_name: string })[];
-    const byParticipant = new Map<string, (typeof candidates)[number]>();
-    for (const track of candidates) {
-      const existing = byParticipant.get(track.participant_id);
-      if (!existing || (track.type === "pcm" && existing.type !== "pcm")) {
-        byParticipant.set(track.participant_id, track);
-      }
-    }
-    const tracks = [...byParticipant.values()];
+    const tracks = pickVoiceTracks(candidates);
     if (tracks.length === 0) throw new Error("No ready audio tracks to transcribe");
 
     const allSegments: TranscriptSegment[] = [];

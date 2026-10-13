@@ -97,7 +97,22 @@ export type MixInput = {
   hasVideo: boolean;
   hasAudio: boolean;
   label: string;
+  /**
+   * Video only: contiguous segments of the same source, in timeline order. A
+   * participant who switches camera or microphone mid-recording produces
+   * several local segments that must share one grid cell instead of
+   * duplicating tiles. When omitted, the input is a single segment.
+   */
+  segments?: VideoSegment[];
 };
+
+export type VideoSegment = { filePath: string; offsetMs: number; durationMs: number | null };
+
+function segmentsOf(input: MixInput): VideoSegment[] {
+  return input.segments?.length
+    ? input.segments
+    : [{ filePath: input.filePath, offsetMs: input.offsetMs, durationMs: null }];
+}
 
 /** Portions of the timeline (ms) to keep, in order — the edit decision list. */
 export type KeepWindow = { startMs: number; endMs: number };
@@ -187,34 +202,85 @@ export async function mixedVideoExport(
   const cellW = Math.floor(size.w / cols / 2) * 2;
   const cellH = Math.floor(size.h / rows / 2) * 2;
 
+  // Every file (including each video segment) is one -i input; remember the
+  // input index of each so the filter graph can reference them.
   const args: string[] = ["-y"];
-  for (const input of inputs) args.push("-i", input.filePath);
+  const videoSegments = new Map<MixInput, VideoSegment[]>();
+  const segIndex = new Map<VideoSegment, number>();
+  const audioIndex = new Map<MixInput, number>();
+  for (const input of inputs) {
+    if (!input.hasVideo) {
+      audioIndex.set(input, (args.length - 1) / 2);
+      args.push("-i", input.filePath);
+      continue;
+    }
+    const segments = segmentsOf(input);
+    videoSegments.set(input, segments);
+    for (const seg of segments) {
+      segIndex.set(seg, (args.length - 1) / 2);
+      args.push("-i", seg.filePath);
+    }
+  }
 
   const filters: string[] = [
     `color=c=0x111318:s=${size.w}x${size.h}:r=30:d=${(totalDurationMs / 1000).toFixed(3)}[base]`,
   ];
   let lastVideo = "base";
   videoInputs.forEach((input, vi) => {
-    const inputIdx = inputs.indexOf(input);
+    const segments = videoSegments.get(input) ?? segmentsOf(input);
     const col = vi % cols;
     const row = Math.floor(vi / cols);
     const x = col * cellW + Math.floor((size.w - cols * cellW) / 2);
     const y = row * cellH + Math.floor((size.h - rows * cellH) / 2);
-    const offsetSec = (input.offsetMs / 1000).toFixed(3);
-    filters.push(
-      `[${inputIdx}:v]scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease,` +
-        `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=0x111318,` +
-        `setpts=PTS-STARTPTS+${offsetSec}/TB[v${vi}]`
-    );
+    const cellScale =
+      `scale=${cellW}:${cellH}:force_original_aspect_ratio=decrease,` +
+      `pad=${cellW}:${cellH}:(ow-iw)/2:(oh-ih)/2:color=0x111318`;
+
+    let cellStream: string;
+    if (segments.length === 1) {
+      const inputIdx = segIndex.get(segments[0])!;
+      const offsetSec = (segments[0].offsetMs / 1000).toFixed(3);
+      filters.push(`[${inputIdx}:v]${cellScale},setpts=PTS-STARTPTS+${offsetSec}/TB[v${vi}]`);
+      cellStream = `v${vi}`;
+    } else {
+      // Multi-segment source: pad the gaps between segments with the
+      // background color and concat them into one continuous cell stream,
+      // then place it at the first segment's offset.
+      const padded: string[] = [];
+      segments.forEach((seg, si) => {
+        const inputIdx = segIndex.get(seg)!;
+        filters.push(`[${inputIdx}:v]${cellScale},setpts=PTS-STARTPTS[c${vi}s${si}]`);
+        let label = `c${vi}s${si}`;
+        if (si > 0) {
+          const prev = segments[si - 1];
+          const prevDur = prev.durationMs ?? seg.offsetMs - prev.offsetMs;
+          const gapMs = Math.max(0, seg.offsetMs - (prev.offsetMs + prevDur));
+          if (gapMs > 50) {
+            filters.push(
+              `[${label}]tpad=start_duration=${(gapMs / 1000).toFixed(3)}:color=0x111318[g${vi}s${si}]`
+            );
+            label = `g${vi}s${si}`;
+          }
+        }
+        padded.push(label);
+      });
+      filters.push(
+        `${padded.map((l) => `[${l}]`).join("")}concat=n=${padded.length}:v=1:a=0[cat${vi}]`
+      );
+      const firstOffsetSec = (segments[0].offsetMs / 1000).toFixed(3);
+      filters.push(`[cat${vi}]setpts=PTS-STARTPTS+${firstOffsetSec}/TB[v${vi}]`);
+      cellStream = `v${vi}`;
+    }
+
     const next = vi === videoInputs.length - 1 ? "vout" : `tmp${vi}`;
-    filters.push(`[${lastVideo}][v${vi}]overlay=${x}:${y}:eof_action=pass[${next}]`);
+    filters.push(`[${lastVideo}][${cellStream}]overlay=${x}:${y}:eof_action=pass[${next}]`);
     lastVideo = next;
   });
 
   if (audioInputs.length > 0) {
     const audioLabels: string[] = [];
     audioInputs.forEach((input, ai) => {
-      const inputIdx = inputs.indexOf(input);
+      const inputIdx = audioIndex.get(input)!;
       const delay = Math.max(0, Math.round(input.offsetMs));
       filters.push(
         `[${inputIdx}:a]aresample=async=1:first_pts=0,adelay=${delay}|${delay}[a${ai}]`

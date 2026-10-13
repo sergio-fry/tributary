@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ParticipantInfo } from "./api";
+import { buildSwitchConstraints, type CaptureSettings } from "./media";
 import { RecordingEngine, type QualityPreset } from "./recorder/recorder";
 import type { UploadHealth } from "./recorder/upload-manager";
 import { fetchRtcConfig, PeerManager, type RemoteMedia } from "./rtc/peers";
@@ -17,6 +18,8 @@ export type RoomConfig = {
   preset: QualityPreset;
   recordWav: boolean;
   cameraStream: MediaStream;
+  /** Capture settings from the lobby — reused when switching devices mid-session. */
+  settings: CaptureSettings;
 };
 
 export type RecordingState = { recordingId: string; startedAtMs: number } | null;
@@ -40,6 +43,9 @@ export function useRoom(config: RoomConfig) {
   const [live, setLive] = useState(false);
   const [watchToken, setWatchToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bumped on every device switch: the camera stream object stays the same, so
+  // this is how consumers (level meters, previews) learn to rebind tracks.
+  const [deviceRev, setDeviceRev] = useState(0);
 
   const signalingRef = useRef<Signaling | null>(null);
   const peerManagerRef = useRef<PeerManager | null>(null);
@@ -247,6 +253,62 @@ export function useRoom(config: RoomConfig) {
     sendState();
   }, [config.cameraStream, sendState]);
 
+  /**
+   * Switch the camera or microphone mid-session: replace the track inside the
+   * live camera stream (same MediaStream object, so previews and senders keep
+   * working) and, while recording, continue capture as a fresh local segment —
+   * MediaRecorder only records tracks present at start, so the old segment is
+   * finalized and a new one begins on the new device.
+   */
+  const switchDevice = useCallback(
+    async (kind: "audio" | "video", deviceId: string) => {
+      const stream = config.cameraStream;
+      const oldTracks = kind === "audio" ? stream.getAudioTracks() : stream.getVideoTracks();
+      try {
+        const media = await navigator.mediaDevices.getUserMedia(
+          buildSwitchConstraints(config.settings, kind, deviceId)
+        );
+        const newTrack =
+          kind === "audio" ? media.getAudioTracks()[0] : media.getVideoTracks()[0];
+        if (!newTrack) throw new Error("The selected device did not provide a track");
+
+        // Carry the current mute/camera-off state onto the new device.
+        newTrack.enabled = oldTracks[0]?.enabled ?? true;
+
+        for (const t of oldTracks) stream.removeTrack(t);
+        stream.addTrack(newTrack);
+
+        const rec = recordingRef.current;
+        const engine = engineRef.current;
+        const signaling = signalingRef.current;
+        if (rec && engine && signaling) {
+          engine.stopTracksOfKind("camera");
+          engine.stopTracksOfKind("pcm");
+          void engine.startTrack(
+            rec.recordingId,
+            rec.startedAtMs,
+            signaling.clockOffsetMs,
+            "camera",
+            stream
+          );
+          if (config.recordWav) {
+            void engine.startPcmTrack(rec.recordingId, rec.startedAtMs, signaling.clockOffsetMs, stream);
+          }
+        }
+
+        // Mesh renegotiates around the new track; the SFU republishes it.
+        peerManagerRef.current?.setCameraStream(stream);
+        void livekitRef.current?.setCameraStream(stream);
+
+        for (const t of oldTracks) t.stop();
+        setDeviceRev((v) => v + 1);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not switch device");
+      }
+    },
+    [config.cameraStream, config.settings, config.recordWav]
+  );
+
   const stopShare = useCallback(() => {
     engineRef.current?.stopTracksOfKind("screen");
     const stream = screenStreamRef.current;
@@ -380,6 +442,8 @@ export function useRoom(config: RoomConfig) {
     camOn,
     toggleMic,
     toggleCam,
+    switchDevice,
+    deviceRev,
     screenStream,
     startShare,
     stopShare,

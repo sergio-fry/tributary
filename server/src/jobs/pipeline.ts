@@ -27,8 +27,10 @@ import {
   toWav,
   type KeepWindow,
   type MixInput,
+  type VideoSegment,
 } from "./ffmpeg.js";
 import { renderTranscript, transcribeRecording } from "./transcribe.js";
+import { pickVoiceTracks } from "../lib/voices.js";
 import type { TranscriptSegment } from "../lib/db.js";
 
 const ASPECT_SIZES: Record<string, { w: number; h: number }> = {
@@ -378,31 +380,40 @@ async function renderExport(exportId: string): Promise<void> {
       .all(exp.recording_id) as (TrackRow & { participant_name: string })[];
     if (tracks.length === 0) throw new Error("No ready tracks for this recording");
 
-    // Video comes from the MP4s (audio muted); voice audio comes from one WAV
-    // per participant, preferring enhanced > uncompressed PCM > camera audio.
+    // Video comes from the MP4s (audio muted); voice audio comes from the
+    // participants' WAVs (see pickVoiceTracks). A participant can produce
+    // several contiguous segments per recording — camera/mic switches and
+    // repeated screen shares — so video segments of the same participant and
+    // type are merged into one grid cell instead of duplicating tiles.
     const inputs: MixInput[] = [];
     let totalDurationMs = 0;
 
+    const videoGroups = new Map<string, { label: string; segments: VideoSegment[] }>();
     for (const track of tracks) {
       if (track.width === null) continue;
       const filePath = mp4TrackPath(track.id);
       if (!fs.existsSync(filePath)) continue;
       const offsetMs = Math.max(0, track.start_offset_ms);
-      inputs.push({ filePath, offsetMs, hasVideo: true, hasAudio: false, label: track.participant_name });
       totalDurationMs = Math.max(totalDurationMs, offsetMs + (track.duration_ms ?? 0));
+      const key = `${track.participant_id}:${track.type}`;
+      const group = videoGroups.get(key) ?? { label: track.participant_name, segments: [] };
+      group.segments.push({ filePath, offsetMs, durationMs: track.duration_ms });
+      videoGroups.set(key, group);
+    }
+    for (const group of videoGroups.values()) {
+      const segments = [...group.segments].sort((a, b) => a.offsetMs - b.offsetMs);
+      inputs.push({
+        filePath: segments[0].filePath,
+        offsetMs: segments[0].offsetMs,
+        hasVideo: true,
+        hasAudio: false,
+        label: group.label,
+        ...(segments.length > 1 ? { segments } : {}),
+      });
     }
 
-    const voiceByParticipant = new Map<string, TrackRow & { participant_name: string }>();
-    for (const track of tracks) {
-      if (track.type === "screen") continue;
-      const existing = voiceByParticipant.get(track.participant_id);
-      const score = (t: TrackRow) => (t.enhanced ? 2 : 0) + (t.type === "pcm" ? 1 : 0);
-      if (!existing || score(track) > score(existing)) {
-        voiceByParticipant.set(track.participant_id, track);
-      }
-    }
     const audioTracks = [
-      ...voiceByParticipant.values(),
+      ...pickVoiceTracks(tracks),
       ...tracks.filter((t) => t.type === "screen"), // screen/system audio, if captured
     ];
     for (const track of audioTracks) {

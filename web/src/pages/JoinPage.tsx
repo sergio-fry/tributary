@@ -146,6 +146,7 @@ export function JoinPage() {
         preset: lobbyResult.settings.preset,
         recordWav: lobbyResult.settings.recordWav,
         cameraStream: lobbyResult.stream,
+        settings: lobbyResult.settings,
       }}
       sessionTitle={joined.session.title}
       onLeave={() => setLeft(true)}

@@ -1,6 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRoom, type RoomConfig } from "../lib/useRoom";
-import { Badge, Button, Input, formatBytes, formatDuration } from "./ui";
+import { listDevices, type DeviceInfo } from "../lib/media";
+import { Badge, Button, Input, Modal, Select, formatBytes, formatDuration } from "./ui";
 import { ChatPanel } from "./ChatPanel";
 import { Teleprompter } from "./Teleprompter";
 import { VideoTile } from "./VideoTile";
@@ -8,6 +9,7 @@ import {
   CamIcon,
   CamOffIcon,
   ChatIcon,
+  GearIcon,
   LeaveIcon,
   LiveIcon,
   MicIcon,
@@ -57,6 +59,94 @@ function ControlButton({
   );
 }
 
+/**
+ * In-room device switcher: swap the camera or microphone live — also while
+ * recording. The track is replaced inside the camera stream; recording
+ * continues as a new segment on the new device.
+ */
+function DevicePicker({
+  cameraStream,
+  audioOnly,
+  recording,
+  onSwitch,
+  onClose,
+}: {
+  cameraStream: MediaStream;
+  audioOnly: boolean;
+  recording: boolean;
+  onSwitch: (kind: "audio" | "video", deviceId: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [cameras, setCameras] = useState<DeviceInfo[] | null>(null);
+  const [microphones, setMicrophones] = useState<DeviceInfo[] | null>(null);
+  const [currentCam, setCurrentCam] = useState("");
+  const [currentMic, setCurrentMic] = useState("");
+  const [switching, setSwitching] = useState<"audio" | "video" | null>(null);
+
+  const readCurrent = useCallback(() => {
+    setCurrentCam((cameraStream.getVideoTracks()[0]?.getSettings().deviceId as string) ?? "");
+    setCurrentMic((cameraStream.getAudioTracks()[0]?.getSettings().deviceId as string) ?? "");
+  }, [cameraStream]);
+
+  useEffect(() => {
+    const refresh = () => {
+      void listDevices().then((d) => {
+        setCameras(d.cameras);
+        setMicrophones(d.microphones);
+      });
+      readCurrent();
+    };
+    refresh();
+    navigator.mediaDevices.addEventListener("devicechange", refresh);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", refresh);
+  }, [readCurrent]);
+
+  const apply = async (kind: "audio" | "video", deviceId: string) => {
+    setSwitching(kind);
+    try {
+      await onSwitch(kind, deviceId);
+    } finally {
+      setSwitching(null);
+      readCurrent();
+    }
+  };
+
+  return (
+    <Modal title="Camera & microphone" onClose={onClose}>
+      {!audioOnly && (
+        <>
+          <label className="text-xs font-semibold uppercase tracking-wider text-gray-500">Camera</label>
+          <Select
+            value={currentCam}
+            disabled={switching !== null}
+            onChange={(v) => void apply("video", v)}
+            options={[
+              { value: "", label: switching === "video" ? "Switching camera…" : "Default camera" },
+              ...(cameras ?? []).map((c) => ({ value: c.deviceId, label: c.label })),
+            ]}
+          />
+        </>
+      )}
+      <label className="text-xs font-semibold uppercase tracking-wider text-gray-500">Microphone</label>
+      <Select
+        value={currentMic}
+        disabled={switching !== null}
+        onChange={(v) => void apply("audio", v)}
+        options={[
+          { value: "", label: switching === "audio" ? "Switching microphone…" : "Default microphone" },
+          ...(microphones ?? []).map((m) => ({ value: m.deviceId, label: m.label })),
+        ]}
+      />
+      <p className="text-xs text-gray-500">
+        Switching is instant for everyone in the call.
+        {recording
+          ? " Your local recording continues seamlessly — a new segment starts on the new device and the takes are stitched in post-production."
+          : ""}
+      </p>
+    </Modal>
+  );
+}
+
 export function RoomView({
   config,
   sessionTitle,
@@ -69,6 +159,7 @@ export function RoomView({
   const room = useRoom(config);
   const [chatOpen, setChatOpen] = useState(false);
   const [prompterOpen, setPrompterOpen] = useState(false);
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [countdownLeft, setCountdownLeft] = useState<number | null>(null);
   const [livePromptOpen, setLivePromptOpen] = useState(false);
@@ -322,6 +413,12 @@ export function RoomView({
             onClick={room.screenStream ? room.stopShare : () => void room.startShare()}
           />
           <ControlButton
+            label="Devices"
+            icon={<GearIcon />}
+            highlighted={devicesOpen}
+            onClick={() => setDevicesOpen((v) => !v)}
+          />
+          <ControlButton
             label="Chat"
             icon={<ChatIcon />}
             highlighted={chatOpen}
@@ -359,6 +456,17 @@ export function RoomView({
           <ControlButton label="Leave" icon={<LeaveIcon />} danger onClick={leave} />
         </div>
       </footer>
+
+      {/* Device switcher */}
+      {devicesOpen && (
+        <DevicePicker
+          cameraStream={config.cameraStream}
+          audioOnly={config.preset === "audio"}
+          recording={!!room.recording}
+          onSwitch={room.switchDevice}
+          onClose={() => setDevicesOpen(false)}
+        />
+      )}
 
       {/* Go-live destination dialog */}
       {livePromptOpen && (

@@ -1,5 +1,6 @@
 import type { TrackRow } from "./db.js";
 import { trackDownloadBase } from "./filenames.js";
+import { pickVoiceTracks } from "./voices.js";
 
 const FPS = 30;
 
@@ -24,16 +25,9 @@ export function buildFcpXml(sequenceName: string, tracks: XmlTrack[]): string {
   const ready = tracks.filter((t) => t.status === "ready" && t.duration_ms);
 
   const videoTracks = ready.filter((t) => t.width !== null);
-  // One audio source per participant: prefer the uncompressed PCM track.
-  const audioByParticipant = new Map<string, XmlTrack>();
-  for (const t of ready) {
-    if (t.type === "screen") continue;
-    const existing = audioByParticipant.get(t.participant_id);
-    if (!existing || (t.type === "pcm" && existing.type !== "pcm")) {
-      audioByParticipant.set(t.participant_id, t);
-    }
-  }
-  const audioTracks = [...audioByParticipant.values()];
+  // Voice per participant — including every segment produced by mid-recording
+  // device switches (see pickVoiceTracks); prefer the uncompressed PCM ones.
+  const audioTracks = pickVoiceTracks(ready);
 
   const totalFrames = Math.max(
     ...ready.map((t) => frames(Math.max(0, t.start_offset_ms) + (t.duration_ms ?? 0))),
