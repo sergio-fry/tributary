@@ -54,11 +54,32 @@ export function buildConstraints(settings: CaptureSettings): MediaStreamConstrai
   return { video, audio };
 }
 
-/** Poll mic level (0..1) from a stream. Returns a cleanup function. */
-export function watchMicLevel(stream: MediaStream, onLevel: (level: number) => void): () => void {
+/**
+ * Shared AudioContext for level meters. Browsers cap the number of contexts per
+ * page (~6 in Chrome), so one meter per video tile must not create its own.
+ */
+let meterCtx: AudioContext | null = null;
+function meterContext(): AudioContext {
+  if (!meterCtx || meterCtx.state === "closed") meterCtx = new AudioContext();
+  if (meterCtx.state === "suspended") void meterCtx.resume();
+  return meterCtx;
+}
+
+/**
+ * Poll sound level from a stream (local or remote). Calls onLevel(level, peak)
+ * per animation frame:
+ * - level — display level 0..1: RMS boosted ×3 so normal speech is visible;
+ * - peak — loudest raw sample 0..1 in the window; ~1.0 means full-scale
+ *   samples, i.e. digital clipping.
+ * Returns a cleanup function.
+ */
+export function watchMicLevel(
+  stream: MediaStream,
+  onLevel: (level: number, peak: number) => void
+): () => void {
   const audioTracks = stream.getAudioTracks();
   if (audioTracks.length === 0) return () => {};
-  const ctx = new AudioContext();
+  const ctx = meterContext();
   const source = ctx.createMediaStreamSource(stream);
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 512;
@@ -68,17 +89,20 @@ export function watchMicLevel(stream: MediaStream, onLevel: (level: number) => v
   const tick = () => {
     analyser.getByteTimeDomainData(data);
     let sum = 0;
+    let peak = 0;
     for (const v of data) {
       const centered = (v - 128) / 128;
       sum += centered * centered;
+      const abs = Math.abs(centered);
+      if (abs > peak) peak = abs;
     }
-    onLevel(Math.min(1, Math.sqrt(sum / data.length) * 3));
+    onLevel(Math.min(1, Math.sqrt(sum / data.length) * 3), Math.min(1, peak));
     raf = requestAnimationFrame(tick);
   };
   tick();
   return () => {
     cancelAnimationFrame(raf);
     source.disconnect();
-    void ctx.close();
+    analyser.disconnect();
   };
 }

@@ -58,7 +58,7 @@ export function Lobby({
         }
         streamRef.current = media;
         setStream(media);
-        cleanupMeter = watchMicLevel(media, setMicLevel);
+        cleanupMeter = watchMicLevel(media, (level) => setMicLevel(level));
         const devices = await listDevices();
         if (!cancelled) {
           setCameras(devices.cameras);
