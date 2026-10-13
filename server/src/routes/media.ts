@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs";
+import { PassThrough } from "node:stream";
 import {
   db,
   type ExportRow,
@@ -9,7 +10,14 @@ import {
   type TranscriptSegment,
 } from "../lib/db.js";
 import { newId, requireUser } from "../lib/auth.js";
-import { enhancedWavPath, exportPath, mp4TrackPath, rawTrackPath, wavTrackPath } from "../lib/storage.js";
+import {
+  chunkPath,
+  enhancedWavPath,
+  exportPath,
+  mp4TrackPath,
+  rawTrackPath,
+  wavTrackPath,
+} from "../lib/storage.js";
 import { queueEnhanceTrack, queueMixedExport, reprocessTrack } from "../jobs/pipeline.js";
 import { queueTranscription, renderTranscript } from "../jobs/transcribe.js";
 import { buildFcpXml } from "../lib/fcpxml.js";
@@ -68,6 +76,158 @@ function streamFile(
   return reply.send(fs.createReadStream(filePath));
 }
 
+// ---- Original (pre-processing) track downloads ----
+//
+// A finished-and-uploaded take must be downloadable immediately, even while
+// ffmpeg is still queued/running (or has failed): stream the assembled raw
+// file when it exists, else concatenate the uploaded chunks on the fly.
+// Chunks are written atomically (tmp + rename) and indexed in the `chunks`
+// table, so anything listed there is complete and safe to serve.
+
+type Part = { buf?: Buffer; file?: string };
+
+/** List this track's fully-received chunk files, in recording order. */
+function receivedChunkParts(trackId: string): { parts: Part[]; bytes: number } {
+  const rows = db
+    .prepare("SELECT idx FROM chunks WHERE track_id = ? ORDER BY idx ASC")
+    .all(trackId) as { idx: number }[];
+  const parts: Part[] = [];
+  let bytes = 0;
+  for (const { idx } of rows) {
+    try {
+      const size = fs.statSync(chunkPath(trackId, idx)).size;
+      if (size > 0) {
+        parts.push({ file: chunkPath(trackId, idx) });
+        bytes += size;
+      }
+    } catch {
+      // file vanished between listing and stat (e.g. post-processing chunk GC)
+    }
+  }
+  return { parts, bytes };
+}
+
+/** 44-byte canonical RIFF/WAV header for an s16le PCM payload. */
+function wavHeader(dataBytes: number, sampleRate: number, channels: number): Buffer {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + dataBytes, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * channels * 2, 28);
+  header.writeUInt16LE(channels * 2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(dataBytes, 40);
+  return header;
+}
+
+/** rate/channels/format parsed out of an `audio/pcm;rate=…;channels=…` mime. */
+function pcmParams(mime: string): { rate: number; channels: number } {
+  const params = new Map(
+    mime
+      .split(";")
+      .slice(1)
+      .map((p) => p.split("=") as [string, string])
+  );
+  return {
+    rate: Number(params.get("rate")) || 48000,
+    channels: Number(params.get("channels")) || 2,
+  };
+}
+
+/** Stream parts (buffers and files) as one attachment with a known length. */
+function streamParts(
+  reply: any,
+  parts: Part[],
+  bytes: number,
+  downloadName: string,
+  contentType: string,
+  headerFor?: (dataBytes: number) => Buffer
+): unknown {
+  if (headerFor) {
+    const header = headerFor(bytes);
+    parts = [{ buf: header }, ...parts];
+    bytes += header.length;
+  }
+  reply.header("Content-Type", contentType);
+  reply.header("Content-Disposition", `attachment; filename="${downloadName}"`);
+  reply.header("Content-Length", String(bytes));
+
+  const out = new PassThrough();
+  let i = 0;
+  const next = (): void => {
+    while (i < parts.length) {
+      const part = parts[i++];
+      if (part.buf) {
+        if (!out.write(part.buf)) {
+          out.once("drain", next);
+          return;
+        }
+        continue;
+      }
+      const read = fs.createReadStream(part.file!);
+      read.on("error", (err) => out.destroy(err));
+      read.on("end", next);
+      read.pipe(out, { end: false });
+      return;
+    }
+    out.end();
+  };
+  next();
+  return reply.send(out);
+}
+
+/**
+ * Stream the track's original recording — what was uploaded, before ffmpeg.
+ * Prefers the assembled raw file; falls back to concatenating uploaded chunks
+ * ("whatever is there" — works mid-upload too). PCM tracks get a WAV header
+ * so the uncompressed original is playable anywhere.
+ */
+function streamOriginal(
+  req: any,
+  reply: any,
+  track: TrackRow,
+  base: string,
+  nameBase?: string
+): unknown {
+  const stem = nameBase ?? `${base}.raw`;
+  const isPcm = track.mime_type.startsWith("audio/pcm");
+  const ext = isPcm ? "pcm" : track.mime_type.includes("mp4") ? "mp4" : "webm";
+  const rawPath = rawTrackPath(track.id, ext);
+
+  if (!isPcm) {
+    const contentType = track.mime_type.split(";")[0] || "video/webm";
+    if (fs.existsSync(rawPath)) {
+      return streamFile(req, reply, rawPath, `${stem}.${ext}`, contentType);
+    }
+    const { parts, bytes } = receivedChunkParts(track.id);
+    if (bytes === 0) return reply.code(404).send({ error: "No uploaded data yet" });
+    return streamParts(reply, parts, bytes, `${stem}.${ext}`, contentType);
+  }
+
+  const { rate, channels } = pcmParams(track.mime_type);
+  const headerFor = (dataBytes: number): Buffer => wavHeader(dataBytes, rate, channels);
+  if (fs.existsSync(rawPath)) {
+    const stat = fs.statSync(rawPath);
+    return streamParts(
+      reply,
+      [{ file: rawPath }],
+      stat.size,
+      `${stem}.wav`,
+      "audio/wav",
+      headerFor
+    );
+  }
+  const { parts, bytes } = receivedChunkParts(track.id);
+  if (bytes === 0) return reply.code(404).send({ error: "No uploaded data yet" });
+  return streamParts(reply, parts, bytes, `${stem}.wav`, "audio/wav", headerFor);
+}
+
 export function registerMediaRoutes(app: FastifyInstance): void {
   app.get("/api/tracks/:trackId/download", async (req, reply) => {
     const user = requireUser(req, reply);
@@ -79,17 +239,20 @@ export function registerMediaRoutes(app: FastifyInstance): void {
 
     const base = trackDownloadBase(track.participant_name, track.type, trackId);
     switch (kind ?? "mp4") {
-      case "raw": {
-        const ext = track.mime_type.startsWith("audio/pcm")
-          ? "pcm"
-          : track.mime_type.includes("mp4")
-            ? "mp4"
-            : "webm";
-        return streamFile(req, reply, rawTrackPath(trackId, ext), `${base}.raw.${ext}`,
-          track.mime_type.split(";")[0] || "video/webm");
+      case "raw":
+        return streamOriginal(req, reply, track, base);
+      case "wav": {
+        const wavPath = wavTrackPath(trackId);
+        if (fs.existsSync(wavPath)) {
+          return streamFile(req, reply, wavPath, `${base}.wav`, "audio/wav");
+        }
+        // PCM tracks: the WAV is just the uploaded PCM wrapped in a header —
+        // serve the original before processing finishes.
+        if (track.mime_type.startsWith("audio/pcm")) {
+          return streamOriginal(req, reply, track, base, `${base}`);
+        }
+        return streamFile(req, reply, wavPath, `${base}.wav`, "audio/wav");
       }
-      case "wav":
-        return streamFile(req, reply, wavTrackPath(trackId), `${base}.wav`, "audio/wav");
       case "enhanced":
         return streamFile(req, reply, enhancedWavPath(trackId), `${base}.enhanced.wav`, "audio/wav");
       case "mp4":

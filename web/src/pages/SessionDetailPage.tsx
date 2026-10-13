@@ -281,10 +281,21 @@ export function SessionDetailPage() {
                               )
                             )}
                           </div>
-                        ) : track.status === "failed" ? (
-                          <button onClick={() => void reprocess(track.id)} className="text-xs text-accent-2 hover:underline">
-                            Retry processing
-                          </button>
+                        ) : track.size_bytes > 0 ? (
+                          <div className="flex gap-2 text-xs">
+                            <a
+                              className="text-accent-2 hover:underline"
+                              title="Original recording as uploaded — downloadable before processing finishes (partial while upload is in progress)"
+                              href={`/api/tracks/${track.id}/download?kind=raw`}
+                            >
+                              Raw
+                            </a>
+                            {track.status === "failed" && (
+                              <button onClick={() => void reprocess(track.id)} className="text-accent-2 hover:underline">
+                                Retry processing
+                              </button>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-xs text-gray-500">—</span>
                         )}

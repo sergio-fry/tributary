@@ -90,6 +90,9 @@ tributary xml rec123 -o timeline.xml   # opens in Premiere/Resolve with offsets 
 
 ## Notes for agents
 
+- `download-track --kind raw` works as soon as chunks are on the server — no need to wait
+  for processing (or even for the upload to finish; you get whatever has landed, and it's a
+  valid stream). PCM tracks' `raw`/`wav` come WAV-wrapped, ready to play.
 - `export --wait -o file` blocks until rendered and downloads in one step; without `--wait`
   it returns an `exportId` you can poll via `tributary session <sessionId>`.
 - Caption burn-in only happens when the server's ffmpeg has libass; the `.srt` sidecar is

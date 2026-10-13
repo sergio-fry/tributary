@@ -59,7 +59,9 @@ participant — plus mixed exports — no matter how rough the live connection w
   transcript viewer. (Uses `whisper-cli` — `brew install whisper-cpp`; the model auto-downloads
   on first use.)
 - **Session dashboard** — takes, participants, per-track status (chunk counts while uploading),
-  downloads, mixed exports, transcripts, retry-processing, auto-record and waiting-room toggles.
+  downloads (originals are downloadable as soon as chunks arrive — before processing finishes,
+  and even while uploads are still in progress), mixed exports, transcripts, retry-processing,
+  auto-record and waiting-room toggles.
 - **Premiere/FCP XML export** — one click gives you an xmeml timeline that drops the downloaded
   MP4/WAV tracks onto synced tracks in Premiere Pro or DaVinci Resolve, offsets applied.
 - **Editor** — per-recording editor with synced multi-track preview, click-to-seek timeline,
