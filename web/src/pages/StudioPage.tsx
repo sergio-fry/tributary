@@ -171,15 +171,17 @@ export function StudioPage() {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(`${location.origin}/join/${session.invite_token}`);
-                  }}
-                  title="Copy the guest invite link"
-                >
-                  Copy invite link
-                </Button>
+                {!session.ended_at && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(`${location.origin}/join/${session.invite_token}`);
+                    }}
+                    title="Copy the guest invite link"
+                  >
+                    Copy invite link
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   className="!text-gray-400 hover:!text-rec"
