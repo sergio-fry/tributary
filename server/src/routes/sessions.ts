@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs";
+import path from "node:path";
 import { z } from "zod";
-import { exportPath } from "../lib/storage.js";
+import { exportPath, MEDIA_DIR, trackChunksDir } from "../lib/storage.js";
 import {
   db,
   type ParticipantRow,
@@ -186,7 +187,18 @@ export function registerSessionRoutes(app: FastifyInstance): void {
     const { sessionId } = req.params as { sessionId: string };
     const session = sessionOwnedByUser(sessionId, user.id);
     if (!session) return reply.code(404).send({ error: "Session not found" });
-    const body = (req.body ?? {}) as { autoRecord?: boolean; waitingRoom?: boolean };
+    const body = (req.body ?? {}) as {
+      title?: string;
+      autoRecord?: boolean;
+      waitingRoom?: boolean;
+    };
+    if (body.title !== undefined) {
+      const parsed = z.string().min(1).max(200).safeParse(body.title);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Session title must be 1-200 characters" });
+      }
+      db.prepare("UPDATE sessions SET title = ? WHERE id = ?").run(parsed.data, sessionId);
+    }
     if (typeof body.autoRecord === "boolean") {
       db.prepare("UPDATE sessions SET auto_record = ? WHERE id = ?").run(
         body.autoRecord ? 1 : 0,
@@ -198,6 +210,43 @@ export function registerSessionRoutes(app: FastifyInstance): void {
         body.waitingRoom ? 1 : 0,
         sessionId
       );
+    }
+    return { ok: true, session: sessionOwnedByUser(sessionId, user.id) };
+  });
+
+  // ---- Delete session: row + cascades + on-disk media ----
+  app.delete("/api/sessions/:sessionId", async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { sessionId } = req.params as { sessionId: string };
+    const session = sessionOwnedByUser(sessionId, user.id);
+    if (!session) return reply.code(404).send({ error: "Session not found" });
+    if (session.status === "live" || session.status === "recording") {
+      return reply.code(409).send({ error: "End the session before deleting it" });
+    }
+    // Collect media references before the row (and its cascades) disappear.
+    const tracks = db
+      .prepare("SELECT id FROM tracks WHERE session_id = ?")
+      .all(sessionId) as { id: string }[];
+    const exportRows = db
+      .prepare("SELECT id, format FROM exports WHERE session_id = ?")
+      .all(sessionId) as { id: string; format: string }[];
+    db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+    // Best-effort cleanup of on-disk media (DB rows are gone via ON DELETE CASCADE).
+    let mediaNames: string[] = [];
+    try {
+      mediaNames = fs.readdirSync(MEDIA_DIR);
+    } catch {
+      // media dir missing — nothing to clean
+    }
+    for (const t of tracks) {
+      fs.rmSync(trackChunksDir(t.id), { recursive: true, force: true });
+      for (const entry of mediaNames) {
+        if (entry.startsWith(`${t.id}.`)) fs.rmSync(path.join(MEDIA_DIR, entry), { force: true });
+      }
+    }
+    for (const e of exportRows) {
+      fs.rmSync(exportPath(e.id, e.format), { force: true });
     }
     return { ok: true };
   });

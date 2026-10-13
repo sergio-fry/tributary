@@ -14,6 +14,7 @@ export function StudioPage() {
   const [memberError, setMemberError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [savingSettings, setSavingSettings] = useState(false);
@@ -60,6 +61,22 @@ export function StudioPage() {
       await load();
     } finally {
       setBusy(false);
+    }
+  };
+
+  const deleteSession = async (session: Session) => {
+    if (
+      !confirm(
+        `Delete "${session.title}" with all its recordings, tracks and exports? This cannot be undone.`
+      )
+    )
+      return;
+    setSessionError(null);
+    try {
+      await api(`/api/sessions/${session.id}`, { method: "DELETE" });
+      await load();
+    } catch (err) {
+      setSessionError(err instanceof Error ? err.message : "Could not delete the session");
     }
   };
 
@@ -163,6 +180,14 @@ export function StudioPage() {
                 >
                   Copy invite link
                 </Button>
+                <Button
+                  variant="ghost"
+                  className="!text-gray-400 hover:!text-rec"
+                  title="Delete this session with all recordings and exports"
+                  onClick={() => void deleteSession(session)}
+                >
+                  Delete
+                </Button>
                 <Link to={`/sessions/${session.id}/room`}>
                   <Button>Enter studio</Button>
                 </Link>
@@ -174,6 +199,7 @@ export function StudioPage() {
               No sessions yet - create one, then enter the studio and invite guests.
             </p>
           )}
+          {sessionError && <p className="text-sm text-rec">{sessionError}</p>}
         </div>
 
         {/* Studio settings (owners) */}

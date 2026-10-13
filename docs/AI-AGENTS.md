@@ -41,6 +41,17 @@ tributary studio-delete <studioId>   # removes the studio + all sessions and med
 Both are owner-only. `--name` and `--description` are each optional for `studio-update`;
 `studio-delete` is irreversible and also wipes on-disk chunks, media and exports.
 
+## Session management
+
+```bash
+tributary session-update <sessionId> --title "Episode 12 — fixed title"
+tributary session-delete <sessionId>   # removes the session + all recordings and media
+```
+
+Any studio member can rename or delete a session, but a live/recording one must be
+ended first (409 otherwise). `session-delete` is irreversible and also wipes on-disk
+chunks, media and exports.
+
 ## Recipes
 
 **Highlight clip for Shorts/Reels** — read the transcript, pick the best 45–60s span,

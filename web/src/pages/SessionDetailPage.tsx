@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api,
   type ExportItem,
@@ -10,7 +10,7 @@ import {
   type TranscriptSegment,
   type TranscriptSummary,
 } from "../lib/api";
-import { Badge, Button, Card, formatBytes, formatDuration, statusTone } from "../components/ui";
+import { Badge, Button, Card, Input, formatBytes, formatDuration, statusTone } from "../components/ui";
 
 const ACTIVE_STATES = ["recording", "uploading", "uploaded", "processing", "queued"];
 
@@ -52,6 +52,10 @@ export function SessionDetailPage() {
   const [exports, setExports] = useState<ExportItem[]>([]);
   const [transcripts, setTranscripts] = useState<TranscriptSummary[]>([]);
   const [openTranscripts, setOpenTranscripts] = useState<Set<string>>(new Set());
+  const [editTitle, setEditTitle] = useState<string | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const load = useCallback(async () => {
     const res = await api<{
@@ -74,6 +78,11 @@ export function SessionDetailPage() {
     void load();
   }, [load]);
 
+  // Seed the title editor once, so polling refreshes don't clobber typing.
+  useEffect(() => {
+    if (session && editTitle === null) setEditTitle(session.title);
+  }, [session, editTitle]);
+
   // Poll while anything is in flight
   const anythingActive =
     tracks.some((t) => ACTIVE_STATES.includes(t.status)) ||
@@ -94,6 +103,40 @@ export function SessionDetailPage() {
   const reprocess = async (trackId: string) => {
     await api(`/api/tracks/${trackId}/reprocess`, { body: {} });
     await load();
+  };
+
+  const saveTitle = async () => {
+    if (editTitle === null || !editTitle.trim()) return;
+    setSavingSettings(true);
+    setSettingsError(null);
+    try {
+      await api(`/api/sessions/${session!.id}`, {
+        method: "PATCH",
+        body: { title: editTitle.trim() },
+      });
+      await load();
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : "Could not rename the session");
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const deleteSession = async () => {
+    const name = session?.title ?? "this session";
+    if (
+      !confirm(
+        `Delete "${name}" with all its recordings, tracks and exports? This cannot be undone.`
+      )
+    )
+      return;
+    setSettingsError(null);
+    try {
+      await api(`/api/sessions/${session!.id}`, { method: "DELETE" });
+      navigate(`/studios/${session!.studio_id}`);
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : "Could not delete the session");
+    }
   };
 
   if (!session) return <div className="min-h-screen bg-ink p-6 text-sm text-gray-400">Loading…</div>;
@@ -173,6 +216,38 @@ export function SessionDetailPage() {
             Guests wait in lobby until admitted
           </label>
         </div>
+
+        {/* Session settings */}
+        <Card className="mt-6 !rounded-2xl !border-0 !bg-panel ring-1 ring-edge">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+            Session settings
+          </h2>
+          <div className="mt-3 flex flex-col gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                placeholder="Session title"
+                value={editTitle ?? ""}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void saveTitle()}
+              />
+              <Button
+                onClick={() => void saveTitle()}
+                disabled={savingSettings || !editTitle?.trim() || editTitle === session.title}
+              >
+                Rename
+              </Button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="danger" onClick={() => void deleteSession()}>
+                Delete session
+              </Button>
+              <span className="text-xs text-gray-500">
+                Deleting removes all recordings, tracks and exports — there is no undo.
+              </span>
+            </div>
+            {settingsError && <p className="text-sm text-rec">{settingsError}</p>}
+          </div>
+        </Card>
 
         {participants.length > 0 && (
           <Card className="mt-6 !rounded-2xl !border-0 !bg-panel ring-1 ring-edge">

@@ -119,6 +119,8 @@ const HELP = {
     "studio-delete <studioId>": "delete a studio with all sessions and media (owners only)",
     "sessions <studioId>": "list sessions in a studio",
     "session <sessionId>": "full detail: recordings, tracks, exports, transcripts",
+    "session-update <sessionId> [--title T]": "rename a session",
+    "session-delete <sessionId>": "delete a session with all recordings and media",
     "transcribe <recordingId> [--wait]": "run whisper transcription",
     "transcript <recordingId> [--format json|txt|srt|vtt] [-o file]": "get the transcript",
     "words <recordingId>": "word-level timestamps (for text-based editing decisions)",
@@ -192,6 +194,19 @@ const commands = {
     const [sessionId] = args;
     if (!sessionId) fail("usage: tributary session <sessionId>");
     out(await api(`/api/sessions/${sessionId}`));
+  },
+
+  async "session-update"() {
+    const [sessionId] = args;
+    if (!sessionId) fail("usage: tributary session-update <sessionId> [--title T]");
+    if (flags.title === undefined) fail("nothing to update: pass --title");
+    out(await api(`/api/sessions/${sessionId}`, { method: "PATCH", body: { title: flags.title } }));
+  },
+
+  async "session-delete"() {
+    const [sessionId] = args;
+    if (!sessionId) fail("usage: tributary session-delete <sessionId>");
+    out(await api(`/api/sessions/${sessionId}`, { method: "DELETE" }));
   },
 
   async transcribe() {
