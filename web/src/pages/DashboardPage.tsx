@@ -66,6 +66,9 @@ export function DashboardPage({ user, onLogout }: { user: User; onLogout: () => 
             <Link key={studio.id} to={`/studios/${studio.id}`} className="block">
               <Card className="!rounded-2xl !border-0 !bg-panel ring-1 ring-edge transition-colors hover:ring-accent/50">
                 <h3 className="font-semibold">{studio.name}</h3>
+                {studio.description && (
+                  <p className="mt-1 line-clamp-2 text-sm text-gray-400">{studio.description}</p>
+                )}
                 <p className="mt-1 text-sm text-gray-400">
                   {studio.session_count ?? 0} session{(studio.session_count ?? 0) === 1 ? "" : "s"}
                 </p>

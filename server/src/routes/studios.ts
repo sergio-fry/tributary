@@ -1,11 +1,21 @@
 import type { FastifyInstance } from "fastify";
+import fs from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import { db, type SessionRow, type StudioRow, type UserRow } from "../lib/db.js";
 import { newId, requireUser } from "../lib/auth.js";
 import { newToken } from "../lib/ids.js";
 import { sessionForMember, studioForMember, studioRole } from "../lib/access.js";
+import { CHUNKS_DIR, EXPORTS_DIR, MEDIA_DIR, exportPath, trackChunksDir } from "../lib/storage.js";
 
-const nameSchema = z.object({ name: z.string().min(1).max(120) });
+const nameSchema = z.object({
+  name: z.string().min(1).max(120),
+  description: z.string().max(2000).default(""),
+});
+const updateSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  description: z.string().max(2000).optional(),
+});
 const sessionSchema = z.object({ title: z.string().min(1).max(200) });
 const memberSchema = z.object({
   email: z.string().email(),
@@ -42,12 +52,14 @@ export function registerStudioRoutes(app: FastifyInstance): void {
       id: newId(),
       user_id: user.id,
       name: parsed.data.name,
+      description: parsed.data.description,
       created_at: Date.now(),
     };
-    db.prepare("INSERT INTO studios (id, user_id, name, created_at) VALUES (?, ?, ?, ?)").run(
+    db.prepare("INSERT INTO studios (id, user_id, name, description, created_at) VALUES (?, ?, ?, ?, ?)").run(
       studio.id,
       studio.user_id,
       studio.name,
+      studio.description,
       studio.created_at
     );
     db.prepare(
@@ -68,6 +80,31 @@ export function registerStudioRoutes(app: FastifyInstance): void {
     return { studio, sessions, role: studio.role };
   });
 
+  app.patch("/api/studios/:studioId", async (req, reply) => {
+    const user = requireUser(req, reply);
+    if (!user) return;
+    const { studioId } = req.params as { studioId: string };
+    if (studioRole(studioId, user.id) !== "owner") {
+      return reply.code(403).send({ error: "Only a studio owner can edit it" });
+    }
+    const parsed = updateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Valid name (1-120 chars) and description (max 2000) required" });
+    }
+    if (parsed.data.name === undefined && parsed.data.description === undefined) {
+      return reply.code(400).send({ error: "Nothing to update: pass name and/or description" });
+    }
+    if (parsed.data.name !== undefined) {
+      db.prepare("UPDATE studios SET name = ? WHERE id = ?").run(parsed.data.name, studioId);
+    }
+    if (parsed.data.description !== undefined) {
+      db.prepare("UPDATE studios SET description = ? WHERE id = ?").run(parsed.data.description, studioId);
+    }
+    const studio = studioForMember(studioId, user.id);
+    if (!studio) return reply.code(404).send({ error: "Studio not found" });
+    return { studio };
+  });
+
   app.delete("/api/studios/:studioId", async (req, reply) => {
     const user = requireUser(req, reply);
     if (!user) return;
@@ -75,7 +112,40 @@ export function registerStudioRoutes(app: FastifyInstance): void {
     if (studioRole(studioId, user.id) !== "owner") {
       return reply.code(403).send({ error: "Only a studio owner can delete it" });
     }
+    // Collect media references before the row (and its cascades) disappear.
+    const tracks = db
+      .prepare(
+        `SELECT t.id FROM tracks t
+         JOIN recordings r ON r.id = t.recording_id
+         JOIN sessions s ON s.id = r.session_id
+         WHERE s.studio_id = ?`
+      )
+      .all(studioId) as { id: string }[];
+    const exportRows = db
+      .prepare(
+        `SELECT e.id, e.format FROM exports e
+         JOIN recordings r ON r.id = e.recording_id
+         JOIN sessions s ON s.id = r.session_id
+         WHERE s.studio_id = ?`
+      )
+      .all(studioId) as { id: string; format: string }[];
     db.prepare("DELETE FROM studios WHERE id = ?").run(studioId);
+    // Best-effort cleanup of on-disk media (DB rows are gone via ON DELETE CASCADE).
+    let mediaNames: string[] = [];
+    try {
+      mediaNames = fs.readdirSync(MEDIA_DIR);
+    } catch {
+      // media dir missing — nothing to clean
+    }
+    for (const t of tracks) {
+      fs.rmSync(trackChunksDir(t.id), { recursive: true, force: true });
+      for (const entry of mediaNames) {
+        if (entry.startsWith(`${t.id}.`)) fs.rmSync(path.join(MEDIA_DIR, entry), { force: true });
+      }
+    }
+    for (const e of exportRows) {
+      fs.rmSync(exportPath(e.id, e.format), { force: true });
+    }
     return { ok: true };
   });
 

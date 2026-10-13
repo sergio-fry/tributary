@@ -115,6 +115,8 @@ const HELP = {
     "login --email E --password P [--server URL]": "authenticate; saves token to ~/.tributary.json",
     whoami: "show the signed-in user",
     studios: "list studios",
+    "studio-update <studioId> [--name N] [--description D]": "rename a studio / change its description (owners only)",
+    "studio-delete <studioId>": "delete a studio with all sessions and media (owners only)",
     "sessions <studioId>": "list sessions in a studio",
     "session <sessionId>": "full detail: recordings, tracks, exports, transcripts",
     "transcribe <recordingId> [--wait]": "run whisper transcription",
@@ -159,6 +161,24 @@ const commands = {
 
   async studios() {
     out(await api("/api/studios"));
+  },
+
+  async "studio-update"() {
+    const [studioId] = args;
+    if (!studioId) fail("usage: tributary studio-update <studioId> [--name N] [--description D]");
+    if (flags.name === undefined && flags.description === undefined) {
+      fail("nothing to update: pass --name and/or --description");
+    }
+    const body = {};
+    if (flags.name !== undefined) body.name = flags.name;
+    if (flags.description !== undefined) body.description = flags.description;
+    out(await api(`/api/studios/${studioId}`, { method: "PATCH", body }));
+  },
+
+  async "studio-delete"() {
+    const [studioId] = args;
+    if (!studioId) fail("usage: tributary studio-delete <studioId>");
+    out(await api(`/api/studios/${studioId}`, { method: "DELETE" }));
   },
 
   async sessions() {

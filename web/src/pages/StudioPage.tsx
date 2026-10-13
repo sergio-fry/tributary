@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Session, type Studio, type StudioMember } from "../lib/api";
-import { Badge, Button, Card, Input, Select, statusTone } from "../components/ui";
+import { Badge, Button, Card, Input, Select, Textarea, statusTone } from "../components/ui";
 
 export function StudioPage() {
   const { studioId } = useParams<{ studioId: string }>();
@@ -14,6 +14,11 @@ export function StudioPage() {
   const [memberError, setMemberError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const load = async () => {
     const res = await api<{ studio: Studio; sessions: Session[]; role: string }>(
@@ -22,6 +27,8 @@ export function StudioPage() {
     setStudio(res.studio);
     setSessions(res.sessions);
     setMyRole(res.role);
+    setEditName(res.studio.name);
+    setEditDescription(res.studio.description ?? "");
     const m = await api<{ members: StudioMember[] }>(`/api/studios/${studioId}/members`);
     setMembers(m.members);
   };
@@ -56,6 +63,43 @@ export function StudioPage() {
     }
   };
 
+  const startEditing = () => {
+    setEditName(studio?.name ?? "");
+    setEditDescription(studio?.description ?? "");
+    setSettingsError(null);
+  };
+
+  const saveSettings = async () => {
+    if (!editName.trim()) return;
+    setSavingSettings(true);
+    setSettingsError(null);
+    try {
+      const res = await api<{ studio: Studio }>(`/api/studios/${studioId}`, {
+        method: "PATCH",
+        body: { name: editName.trim(), description: editDescription.trim() },
+      });
+      setStudio(res.studio);
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : "Could not save studio settings");
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const deleteStudio = async () => {
+    const name = studio?.name ?? "this studio";
+    const confirmed = window.confirm(
+      `Delete "${name}" with all its sessions, recordings and exports? This cannot be undone.`
+    );
+    if (!confirmed) return;
+    try {
+      await api(`/api/studios/${studioId}`, { method: "DELETE" });
+      navigate("/");
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : "Could not delete studio");
+    }
+  };
+
   if (!studio) return <div className="min-h-screen bg-ink p-6 text-sm text-gray-400">Loading…</div>;
 
   return (
@@ -73,6 +117,9 @@ export function StudioPage() {
 
       <main className="mx-auto max-w-5xl p-6">
         <h2 className="text-2xl font-bold tracking-tight">{studio.name}</h2>
+        {studio.description && (
+          <p className="mt-2 max-w-2xl whitespace-pre-line text-sm text-gray-400">{studio.description}</p>
+        )}
 
         <Card className="mt-6 !rounded-2xl !border-0 !bg-panel ring-1 ring-edge">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
@@ -129,6 +176,44 @@ export function StudioPage() {
           )}
         </div>
 
+        {/* Studio settings (owners) */}
+        {myRole === "owner" && (
+          <Card className="mt-8 !rounded-2xl !border-0 !bg-panel ring-1 ring-edge">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Studio settings
+            </h3>
+            <div className="mt-3 flex flex-col gap-3">
+              <Input
+                placeholder="Studio name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+              />
+              <Textarea
+                rows={3}
+                placeholder="What is this studio for? (shown on the dashboard)"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button onClick={() => void saveSettings()} disabled={savingSettings || !editName.trim()}>
+                  Save changes
+                </Button>
+                <Button variant="ghost" onClick={startEditing}>
+                  Reset
+                </Button>
+                <span className="grow" />
+                <Button variant="danger" onClick={() => void deleteStudio()}>
+                  Delete studio
+                </Button>
+              </div>
+              {settingsError && <p className="text-sm text-rec">{settingsError}</p>}
+              <p className="text-xs text-gray-500">
+                Deleting removes all sessions, recordings, tracks and exports — there is no undo.
+              </p>
+            </div>
+          </Card>
+        )}
+
         {/* Team */}
         <Card className="mt-8 !rounded-2xl !border-0 !bg-panel ring-1 ring-edge">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">Team</h3>
@@ -180,8 +265,8 @@ export function StudioPage() {
           )}
           {memberError && <p className="mt-2 text-sm text-rec">{memberError}</p>}
           <p className="mt-2 text-xs text-gray-500">
-            Editors can create sessions, record, edit, and export. Owners can also manage the team
-            and delete the studio.
+            Editors can create sessions, record, edit, and export. Owners can also edit studio
+            details, manage the team and delete the studio.
           </p>
         </Card>
       </main>

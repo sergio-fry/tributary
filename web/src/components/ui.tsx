@@ -1,4 +1,9 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
+import type {
+  ButtonHTMLAttributes,
+  InputHTMLAttributes,
+  ReactNode,
+  TextareaHTMLAttributes,
+} from "react";
 
 export function Button({
   variant = "primary",
@@ -22,6 +27,15 @@ export function Button({
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
+      {...props}
+      className={`w-full rounded-lg bg-panel-2 border border-edge px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-accent ${props.className ?? ""}`}
+    />
+  );
+}
+
+export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
       {...props}
       className={`w-full rounded-lg bg-panel-2 border border-edge px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-accent ${props.className ?? ""}`}
     />

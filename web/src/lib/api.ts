@@ -28,6 +28,7 @@ export type User = { id: string; email: string; name: string };
 export type Studio = {
   id: string;
   name: string;
+  description?: string;
   created_at: number;
   session_count?: number;
   member_count?: number;

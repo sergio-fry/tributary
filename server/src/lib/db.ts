@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS studios (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL
 );
 
@@ -114,6 +115,7 @@ for (const migration of [
   "ALTER TABLE transcripts ADD COLUMN words_json TEXT",
   "ALTER TABLE sessions ADD COLUMN watch_token TEXT",
   "ALTER TABLE tracks ADD COLUMN enhanced INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE studios ADD COLUMN description TEXT NOT NULL DEFAULT ''",
 ]) {
   try {
     db.exec(migration);
@@ -167,6 +169,7 @@ export type StudioRow = {
   id: string;
   user_id: string;
   name: string;
+  description: string;
   created_at: number;
 };
 

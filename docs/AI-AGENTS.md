@@ -31,6 +31,16 @@ tributary export <recordingId> [edits…] --wait -o out.mp4
 **All times are milliseconds on the recording timeline** — the same timebase across
 transcript segments, words, and export edit parameters. What you read is what you cut.
 
+## Studio management
+
+```bash
+tributary studio-update <studioId> --name "New name" --description "What this studio is for"
+tributary studio-delete <studioId>   # removes the studio + all sessions and media (owners only)
+```
+
+Both are owner-only. `--name` and `--description` are each optional for `studio-update`;
+`studio-delete` is irreversible and also wipes on-disk chunks, media and exports.
+
 ## Recipes
 
 **Highlight clip for Shorts/Reels** — read the transcript, pick the best 45–60s span,
