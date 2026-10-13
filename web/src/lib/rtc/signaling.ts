@@ -2,11 +2,15 @@ import type { UploadHealth } from "../recorder/upload-manager";
 
 export type PeerState = { mic: boolean; cam: boolean; sharing: boolean };
 
+/** Labels of the input devices a participant is currently capturing with. */
+export type PeerDevices = { mic: string | null; cam: string | null };
+
 export type Peer = {
   participantId: string;
   name: string;
   role: "host" | "guest";
   state: PeerState;
+  devices: PeerDevices | null;
   upload: UploadHealth | null;
 };
 
@@ -35,6 +39,7 @@ export type SignalingEvents = {
   onLiveChanged?: (live: boolean) => void;
   onSignal: (from: string, data: any) => void;
   onPeerState: (participantId: string, state: PeerState) => void;
+  onPeerDevices: (participantId: string, devices: PeerDevices) => void;
   onPeerUpload: (participantId: string, health: UploadHealth | null) => void;
   onChat: (msg: ChatMessage) => void;
   onRecordingStarted: (recordingId: string, startedAtMs: number) => void;
@@ -126,6 +131,10 @@ export class Signaling {
     this.send({ t: "state", ...state });
   }
 
+  sendDevices(devices: PeerDevices): void {
+    this.send({ t: "devices", devices });
+  }
+
   sendChat(text: string): void {
     this.send({ t: "chat", text });
   }
@@ -198,6 +207,9 @@ export class Signaling {
         break;
       case "state":
         this.events.onPeerState(msg.participantId, msg.state);
+        break;
+      case "devices":
+        this.events.onPeerDevices(msg.participantId, msg.devices);
         break;
       case "upload":
         this.events.onPeerUpload(msg.participantId, msg.health);

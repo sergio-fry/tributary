@@ -1,4 +1,5 @@
 import type { QualityPreset } from "./recorder/recorder";
+import type { PeerDevices } from "./rtc/signaling";
 
 export type DeviceInfo = { deviceId: string; label: string };
 
@@ -16,6 +17,18 @@ export async function listDevices(): Promise<{
     cameras: pick("videoinput", "Camera"),
     microphones: pick("audioinput", "Microphone"),
     speakers: pick("audiooutput", "Speaker"),
+  };
+}
+
+/**
+ * Labels of the devices this stream is capturing with (from the live tracks),
+ * shared with the room via signaling — mid-session switches replace tracks, so
+ * read them fresh whenever the capture changes.
+ */
+export function selectedDevices(stream: MediaStream): PeerDevices {
+  return {
+    mic: stream.getAudioTracks()[0]?.label ?? null,
+    cam: stream.getVideoTracks()[0]?.label ?? null,
   };
 }
 

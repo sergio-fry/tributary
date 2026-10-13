@@ -5,6 +5,7 @@ import { Badge, Button, Input, Modal, Select, formatBytes, formatDuration } from
 import { ChatPanel } from "./ChatPanel";
 import { Teleprompter } from "./Teleprompter";
 import { VideoTile } from "./VideoTile";
+import { ParticipantsPanel } from "./ParticipantsPanel";
 import {
   CamIcon,
   CamOffIcon,
@@ -15,6 +16,7 @@ import {
   MicIcon,
   MicOffIcon,
   PauseIcon,
+  PeopleIcon,
   ScreenIcon,
   ScriptIcon,
   UploadIcon,
@@ -158,6 +160,7 @@ export function RoomView({
 }) {
   const room = useRoom(config);
   const [chatOpen, setChatOpen] = useState(false);
+  const [peopleOpen, setPeopleOpen] = useState(false);
   const [prompterOpen, setPrompterOpen] = useState(false);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -189,6 +192,32 @@ export function RoomView({
   const uploadsPending =
     room.myUpload !== null && room.myUpload.state !== "complete" && !room.recording;
   const peerScreens = room.peers.filter((p) => p.media.screen);
+
+  // Roster for the people panel: self first, then everyone else.
+  const people = [
+    {
+      id: config.participant.id,
+      name: config.participant.name,
+      role: config.participant.role,
+      isSelf: true,
+      micOn: room.micOn,
+      camOn: room.camOn,
+      audioOnly: config.preset === "audio",
+      devices: room.myDevices,
+      upload: room.myUpload,
+    },
+    ...room.peers.map((p) => ({
+      id: p.participantId,
+      name: p.name,
+      role: p.role,
+      isSelf: false,
+      micOn: p.state.mic,
+      camOn: p.state.cam,
+      audioOnly: false,
+      devices: p.devices,
+      upload: p.upload,
+    })),
+  ];
 
   // Release the camera/mic (and its indicator light) once this tab is out of the
   // session — replaced by another tab or declined by the host.
@@ -353,6 +382,9 @@ export function RoomView({
             </p>
           )}
         </main>
+        {peopleOpen && (
+          <ParticipantsPanel participants={people} onClose={() => setPeopleOpen(false)} />
+        )}
         {chatOpen && (
           <ChatPanel
             messages={room.chat}
@@ -417,6 +449,12 @@ export function RoomView({
             icon={<GearIcon />}
             highlighted={devicesOpen}
             onClick={() => setDevicesOpen((v) => !v)}
+          />
+          <ControlButton
+            label="People"
+            icon={<PeopleIcon />}
+            highlighted={peopleOpen}
+            onClick={() => setPeopleOpen((v) => !v)}
           />
           <ControlButton
             label="Chat"

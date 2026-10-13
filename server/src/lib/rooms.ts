@@ -32,6 +32,14 @@ function cancelEmptyRoomStop(sessionId: string): void {
 
 export type PeerState = { mic: boolean; cam: boolean; sharing: boolean };
 
+/** Labels of the input devices a participant is currently capturing with. */
+export type PeerDevices = { mic: string | null; cam: string | null };
+
+function sanitizeLabel(value: unknown): string | null {
+  const label = String(value ?? "").trim().slice(0, 200);
+  return label || null;
+}
+
 export type UploadHealth = {
   state: string; // recording | uploading | caught_up | delayed | paused | complete | failed
   queuedChunks: number;
@@ -47,6 +55,7 @@ type Client = {
   name: string;
   socket: WebSocket;
   state: PeerState;
+  devices: PeerDevices;
   upload: UploadHealth | null;
   /** In the waiting room: invisible to the call until a host admits them. */
   waiting: boolean;
@@ -69,6 +78,7 @@ export function publicPeer(c: Client) {
     name: c.name,
     role: c.role,
     state: c.state,
+    devices: c.devices,
     upload: c.upload,
   };
 }
@@ -108,6 +118,7 @@ export function addClient(participant: ParticipantRow, socket: WebSocket): Clien
     name: participant.name,
     socket,
     state: { mic: true, cam: true, sharing: false },
+    devices: { mic: null, cam: null },
     upload: null,
     waiting: needsAdmission,
   };
@@ -250,6 +261,18 @@ export function handleClientMessage(client: Client, raw: string): void {
         client.participantId
       );
       break;
+    case "devices": {
+      client.devices = {
+        mic: sanitizeLabel((msg.devices as any)?.mic),
+        cam: sanitizeLabel((msg.devices as any)?.cam),
+      };
+      broadcast(
+        client.sessionId,
+        { t: "devices", participantId: client.participantId, devices: client.devices },
+        client.participantId
+      );
+      break;
+    }
     case "chat": {
       const text = String(msg.text ?? "").slice(0, 2000).trim();
       if (!text) return;

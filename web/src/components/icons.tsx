@@ -121,6 +121,17 @@ export function PencilIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function PeopleIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+      <path d="M15.5 5.4a3.2 3.2 0 0 1 0 5.2" />
+      <path d="M17 13.6a5.5 5.5 0 0 1 3.5 5.1" />
+    </svg>
+  );
+}
+
 export function GearIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base(props)}>

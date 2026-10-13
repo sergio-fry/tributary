@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ParticipantInfo } from "./api";
-import { buildSwitchConstraints, type CaptureSettings } from "./media";
+import { buildSwitchConstraints, selectedDevices, type CaptureSettings } from "./media";
 import { RecordingEngine, type QualityPreset } from "./recorder/recorder";
 import type { UploadHealth } from "./recorder/upload-manager";
 import { fetchRtcConfig, PeerManager, type RemoteMedia } from "./rtc/peers";
 import { LiveKitManager } from "./rtc/livekit";
 import { ProgramStreamer, type ProgramSource } from "./streaming";
-import { Signaling, type ChatMessage, type Peer, type PeerState } from "./rtc/signaling";
+import { Signaling, type ChatMessage, type Peer, type PeerDevices, type PeerState } from "./rtc/signaling";
 
 export type RoomPeer = Peer & { media: RemoteMedia };
 
@@ -39,6 +39,7 @@ export function useRoom(config: RoomConfig) {
   const [waiting, setWaiting] = useState(false);
   const [declined, setDeclined] = useState(false);
   const [waitingGuests, setWaitingGuests] = useState<Peer[]>([]);
+  const [myDevices, setMyDevices] = useState<PeerDevices>({ mic: null, cam: null });
   const [teleprompter, setTeleprompter] = useState("");
   const [live, setLive] = useState(false);
   const [watchToken, setWatchToken] = useState<string | null>(null);
@@ -112,12 +113,19 @@ export function useRoom(config: RoomConfig) {
         setPeers(() => {
           const map = new Map<string, RoomPeer>();
           for (const peer of existingPeers) {
-            map.set(peer.participantId, { ...peer, media: { camera: null, screen: null } });
+            map.set(peer.participantId, {
+              ...peer,
+              devices: peer.devices ?? null,
+              media: { camera: null, screen: null },
+            });
             peerManagerRef.current?.addPeer(peer.participantId); // mesh: newcomer initiates offers
           }
           return map;
         });
         signaling.sendState(currentState());
+        // Announce our devices — the WebSocket may not have been open when the
+        // initial label state was computed, so (re)send on every welcome.
+        signaling.sendDevices(selectedDevices(config.cameraStream));
 
         if (activeRecording && !recordingRef.current) {
           beginLocalRecording(activeRecording.recordingId, activeRecording.startedAtMs);
@@ -126,7 +134,11 @@ export function useRoom(config: RoomConfig) {
       onPeerJoined: (peer) => {
         setPeers((prev) => {
           const next = new Map(prev);
-          next.set(peer.participantId, { ...peer, media: { camera: null, screen: null } });
+          next.set(peer.participantId, {
+            ...peer,
+            devices: peer.devices ?? null,
+            media: { camera: null, screen: null },
+          });
           return next;
         });
       },
@@ -142,6 +154,7 @@ export function useRoom(config: RoomConfig) {
         void peerManagerRef.current?.handleSignal(from, data);
       },
       onPeerState: (participantId, state: PeerState) => updatePeer(participantId, { state }),
+      onPeerDevices: (participantId, devices) => updatePeer(participantId, { devices }),
       onPeerUpload: (participantId, health) => updatePeer(participantId, { upload: health }),
       onChat: (msg) => setChat((prev) => [...prev.slice(-199), msg]),
       onRecordingStarted: (recordingId, startedAtMs) => {
@@ -232,6 +245,21 @@ export function useRoom(config: RoomConfig) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.sessionId, config.token]);
+
+  // Track the devices behind the camera stream (labels change on mid-session
+  // switches) and announce them so the people panel can show what everyone is
+  // capturing with. The welcome handler re-sends them once the WS is up.
+  useEffect(() => {
+    const next = selectedDevices(config.cameraStream);
+    setMyDevices((prev) =>
+      prev.mic === next.mic && prev.cam === next.cam ? prev : next
+    );
+  }, [config.cameraStream, deviceRev]);
+
+  useEffect(() => {
+    if (myDevices.mic === null && myDevices.cam === null) return;
+    signalingRef.current?.sendDevices(myDevices);
+  }, [myDevices]);
 
   const sendState = useCallback(() => {
     signalingRef.current?.sendState({
@@ -440,6 +468,7 @@ export function useRoom(config: RoomConfig) {
     sendChat,
     micOn,
     camOn,
+    myDevices,
     toggleMic,
     toggleCam,
     switchDevice,
