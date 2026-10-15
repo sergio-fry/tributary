@@ -29,7 +29,7 @@ export type PcmChunk = { data: Blob; durationMs: number };
 
 export class PcmRecorder {
   readonly sampleRate: number;
-  readonly channels = 2;
+  readonly channels: number;
   onchunk: ((chunk: PcmChunk) => void) | null = null;
   onstop: (() => void) | null = null;
   onstart: (() => void) | null = null;
@@ -43,8 +43,9 @@ export class PcmRecorder {
   private stopped = false;
   private started = false;
 
-  constructor(stream: MediaStream) {
+  constructor(stream: MediaStream, channels: 1 | 2 = 2) {
     this.stream = stream;
+    this.channels = channels;
     this.ctx = new AudioContext({ sampleRate: 48000 });
     this.sampleRate = this.ctx.sampleRate; // browser may pin to hardware rate
   }
@@ -103,10 +104,12 @@ export class PcmRecorder {
     let offset = 0;
     for (const block of blocks) {
       const left = block[0] ?? new Float32Array(0);
-      const right = block[1] ?? left; // mono mics duplicate to both channels
+      const right = this.channels === 2 ? block[1] ?? left : null; // mono mics duplicate to both channels
       for (let i = 0; i < left.length; i++) {
         out[offset++] = floatToS16(left[i]);
-        out[offset++] = floatToS16(right[i] ?? left[i]);
+        if (this.channels === 2) {
+          out[offset++] = floatToS16(right![i] ?? left[i]);
+        }
       }
     }
     this.onchunk?.({

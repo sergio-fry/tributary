@@ -17,6 +17,7 @@ export type RoomConfig = {
   isHost: boolean;
   preset: QualityPreset;
   recordWav: boolean;
+  recordMono: boolean;
   cameraStream: MediaStream;
   /** Capture settings from the lobby — reused when switching devices mid-session. */
   settings: CaptureSettings;
@@ -76,6 +77,7 @@ export function useRoom(config: RoomConfig) {
       videoBitrateBps: config.settings.videoBitrateMbps
         ? Math.round(config.settings.videoBitrateMbps * 1_000_000)
         : null,
+      recordMono: config.recordMono,
       onAggregateHealth: (health) => {
         setMyUpload(health);
         const now = Date.now();
@@ -337,7 +339,7 @@ export function useRoom(config: RoomConfig) {
         setError(err instanceof Error ? err.message : "Could not switch device");
       }
     },
-    [config.cameraStream, config.settings, config.recordWav]
+    [config.cameraStream, config.settings, config.recordWav, config.recordMono]
   );
 
   const stopShare = useCallback(() => {

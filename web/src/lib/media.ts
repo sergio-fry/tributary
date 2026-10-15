@@ -42,6 +42,7 @@ export type CaptureSettings = {
   videoBitrateMbps: number | null;
   echoCancellation: boolean; // "are you wearing headphones?" → off
   recordWav: boolean; // extra uncompressed 48kHz PCM audio track
+  recordMono: boolean; // mono (1) vs stereo (2) audio capture
 };
 
 export function buildConstraints(settings: CaptureSettings): MediaStreamConstraints {
@@ -66,7 +67,7 @@ export function buildConstraints(settings: CaptureSettings): MediaStreamConstrai
     noiseSuppression: settings.echoCancellation,
     autoGainControl: true,
     sampleRate: 48000,
-    channelCount: 2,
+    channelCount: settings.recordMono ? 1 : 2,
   };
   return { video, audio };
 }

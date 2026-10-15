@@ -54,6 +54,8 @@ export type EngineOptions = {
   /** Explicit video bitrate (bits/s) chosen in the lobby; overrides the preset
    * default for the local recording encoder. Null/undefined → preset default. */
   videoBitrateBps?: number | null;
+  /** Capture a single-channel (mono) WAV track instead of stereo. */
+  recordMono?: boolean;
   onAggregateHealth: (health: UploadHealth) => void;
   onError: (message: string) => void;
 };
@@ -231,7 +233,7 @@ export class RecordingEngine {
     stream: MediaStream
   ): Promise<void> {
     if (stream.getAudioTracks().length === 0) return;
-    const recorder = new PcmRecorder(stream);
+    const recorder = new PcmRecorder(stream, this.opts.recordMono ? 1 : 2);
     const mimeType = `audio/pcm;rate=${recorder.sampleRate};channels=${recorder.channels};format=s16le`;
 
     const localId = crypto.randomUUID();

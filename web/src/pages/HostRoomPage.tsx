@@ -51,6 +51,7 @@ export function HostRoomPage() {
         isHost: true,
         preset: lobbyResult.settings.preset,
         recordWav: lobbyResult.settings.recordWav,
+        recordMono: lobbyResult.settings.recordMono,
         cameraStream: lobbyResult.stream,
         settings: lobbyResult.settings,
       }}

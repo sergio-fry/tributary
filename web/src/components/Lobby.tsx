@@ -34,6 +34,7 @@ export function Lobby({
   // echo cancellation off (cleaner local capture) until the user opts out.
   const [headphones, setHeadphones] = useState(true);
   const [recordWav, setRecordWav] = useState(true);
+  const [recordMono, setRecordMono] = useState(true);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
   const [micLevel, setMicLevel] = useState(0);
@@ -56,6 +57,7 @@ export function Lobby({
     videoBitrateMbps: preset === "audio" ? null : bitrateMbps,
     echoCancellation: !headphones,
     recordWav,
+    recordMono,
   };
 
   // Switching presets re-targets the bitrate to that preset's default; the
@@ -103,7 +105,7 @@ export function Lobby({
       cleanupMeter?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cameraId, microphoneId, preset, headphones]);
+  }, [cameraId, microphoneId, preset, headphones, recordMono]);
 
   // Stop preview tracks when the lobby unmounts WITHOUT joining
   useEffect(
@@ -225,6 +227,19 @@ export function Lobby({
           <p className="text-xs text-gray-500">
             Records an extra uncompressed 48kHz audio track straight from your mic — the best
             source for post-production.
+          </p>
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={recordMono}
+              onChange={(e) => setRecordMono(e.target.checked)}
+              className="h-4 w-4 accent-accent"
+            />
+            Record mono track
+          </label>
+          <p className="text-xs text-gray-500">
+            Captures a single-channel audio track — smaller file, fewer sync surprises, and the
+            default for most studio recordings. Uncheck for stereo.
           </p>
           <Button onClick={join} disabled={!stream} className="mt-2 w-full">
             {joinLabel}
