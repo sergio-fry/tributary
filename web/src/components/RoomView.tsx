@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRoom, type RoomConfig } from "../lib/useRoom";
 import { listDevices, type DeviceInfo } from "../lib/media";
+import type { UploadHealth } from "../lib/recorder/upload-manager";
 import { Badge, Button, Input, Modal, Select, formatBytes, formatDuration } from "./ui";
 import { ChatPanel } from "./ChatPanel";
 import { Teleprompter } from "./Teleprompter";
@@ -149,6 +150,57 @@ function DevicePicker({
   );
 }
 
+/**
+ * Compact, non-blocking upload progress card. Replaces the old post-stop
+ * full-screen modal: the room stays fully usable while the recording uploads
+ * (e.g. the camera can be switched off to free bandwidth for the upload).
+ */
+function UploadProgressCard({ upload, onHide }: { upload: UploadHealth; onHide: () => void }) {
+  const struggling = upload.state === "delayed" || upload.state === "failed";
+  const status =
+    upload.state === "paused"
+      ? "Paused — Resume is in the controls"
+      : struggling
+        ? "Connection issues — retrying…"
+        : `${upload.percent}%`;
+  return (
+    <div className="fixed bottom-24 left-6 z-40 w-72 rounded-xl border border-edge bg-panel p-4 shadow-lg">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <UploadIcon width={14} height={14} className="shrink-0 text-accent-2" />
+          Uploading recording
+        </h3>
+        <span className="flex items-center gap-2">
+          <span className="text-xs font-medium text-gray-400">{upload.percent}%</span>
+          <button
+            onClick={onHide}
+            aria-label="Hide upload progress"
+            title="Hide — progress stays in the header"
+            className="text-gray-500 hover:text-white"
+          >
+            ✕
+          </button>
+        </span>
+      </div>
+      <div className="mt-3 h-1.5 overflow-hidden rounded bg-panel-2">
+        <div
+          className="h-full rounded bg-accent transition-[width]"
+          style={{ width: `${upload.percent}%` }}
+        />
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-gray-400">
+        <span className="whitespace-nowrap">
+          {formatBytes(upload.uploadedBytes)} / {formatBytes(upload.totalBytes)}
+        </span>
+        <span className={`truncate ${struggling ? "text-amber-400" : ""}`}>{status}</span>
+      </div>
+      <p className="mt-2 text-xs text-gray-500">
+        Keep this tab open — the studio stays usable while it uploads.
+      </p>
+    </div>
+  );
+}
+
 export function RoomView({
   config,
   sessionTitle,
@@ -167,6 +219,7 @@ export function RoomView({
   const [countdownLeft, setCountdownLeft] = useState<number | null>(null);
   const [livePromptOpen, setLivePromptOpen] = useState(false);
   const [rtmpUrl, setRtmpUrl] = useState("");
+  const [uploadCardHidden, setUploadCardHidden] = useState(false);
 
   useEffect(() => {
     if (!room.recording) return;
@@ -188,6 +241,11 @@ export function RoomView({
     const timer = setInterval(tick, 200);
     return () => clearInterval(timer);
   }, [room.countdownEndsAt]);
+
+  // A new recording brings the upload card back even if it was hidden before.
+  useEffect(() => {
+    if (room.recording) setUploadCardHidden(false);
+  }, [room.recording]);
 
   const uploadsPending =
     room.myUpload !== null && room.myUpload.state !== "complete" && !room.recording;
@@ -570,31 +628,9 @@ export function RoomView({
         </div>
       )}
 
-      {/* Post-stop upload overlay */}
-      {uploadsPending && room.myUpload && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6">
-          <div className="w-full max-w-md rounded-xl border border-edge bg-panel p-6">
-            <h2 className="text-lg font-semibold">Recording stopped — uploading</h2>
-            <p className="mt-2 text-sm text-gray-400">
-              Keep this tab open until the upload finishes. Your recording is stored locally and
-              uploads even on a weak connection.
-            </p>
-            <div className="mt-4 h-2 overflow-hidden rounded bg-panel-2">
-              <div
-                className="h-full rounded bg-accent transition-[width]"
-                style={{ width: `${room.myUpload.percent}%` }}
-              />
-            </div>
-            <div className="mt-2 flex justify-between text-xs text-gray-400">
-              <span>
-                {formatBytes(room.myUpload.uploadedBytes)} / {formatBytes(room.myUpload.totalBytes)}
-              </span>
-              <span>
-                {room.myUpload.state === "delayed" ? "Connection issues — retrying…" : `${room.myUpload.percent}%`}
-              </span>
-            </div>
-          </div>
-        </div>
+      {/* Post-stop upload progress — compact and non-blocking (was a full-screen modal) */}
+      {uploadsPending && room.myUpload && !uploadCardHidden && (
+        <UploadProgressCard upload={room.myUpload} onHide={() => setUploadCardHidden(true)} />
       )}
       {room.myUpload?.state === "complete" && !room.recording && (
         <div className="pointer-events-none fixed bottom-20 left-1/2 z-40 -translate-x-1/2 rounded-lg bg-emerald-500/15 px-4 py-2 text-sm text-emerald-300">
