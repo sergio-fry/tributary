@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import fs from "node:fs";
-import path from "node:path";
 import { z } from "zod";
-import { exportPath, MEDIA_DIR, trackChunksDir } from "../lib/storage.js";
+import { exportPath } from "../lib/storage.js";
+import { removeSessionFiles } from "../lib/cleanup.js";
+import { stopStream } from "../lib/streaming.js";
 import {
   db,
   type ParticipantRow,
@@ -229,25 +230,19 @@ export function registerSessionRoutes(app: FastifyInstance): void {
       .prepare("SELECT id FROM tracks WHERE session_id = ?")
       .all(sessionId) as { id: string }[];
     const exportRows = db
-      .prepare("SELECT id, format FROM exports WHERE session_id = ?")
-      .all(sessionId) as { id: string; format: string }[];
+      .prepare("SELECT id FROM exports WHERE session_id = ?")
+      .all(sessionId) as { id: string }[];
+    // A live-stream pipeline writes outside the session status — stop it, or
+    // ffmpeg would keep recreating files under data/live after the cleanup.
+    stopStream(sessionId); // no-op if not streaming
     db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
-    // Best-effort cleanup of on-disk media (DB rows are gone via ON DELETE CASCADE).
-    let mediaNames: string[] = [];
-    try {
-      mediaNames = fs.readdirSync(MEDIA_DIR);
-    } catch {
-      // media dir missing — nothing to clean
-    }
-    for (const t of tracks) {
-      fs.rmSync(trackChunksDir(t.id), { recursive: true, force: true });
-      for (const entry of mediaNames) {
-        if (entry.startsWith(`${t.id}.`)) fs.rmSync(path.join(MEDIA_DIR, entry), { force: true });
-      }
-    }
-    for (const e of exportRows) {
-      fs.rmSync(exportPath(e.id, e.format), { force: true });
-    }
+    // Best-effort cleanup of on-disk media (DB rows are gone via ON DELETE
+    // CASCADE): chunks, deliverables, exports with caption sidecars, HLS dir.
+    removeSessionFiles(
+      [sessionId],
+      tracks.map((t) => t.id),
+      exportRows.map((e) => e.id)
+    );
     return { ok: true };
   });
 

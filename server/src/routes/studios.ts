@@ -1,12 +1,11 @@
 import type { FastifyInstance } from "fastify";
-import fs from "node:fs";
-import path from "node:path";
 import { z } from "zod";
 import { db, type SessionRow, type StudioRow, type UserRow } from "../lib/db.js";
 import { newId, requireUser } from "../lib/auth.js";
 import { newToken } from "../lib/ids.js";
 import { sessionForMember, studioForMember, studioRole } from "../lib/access.js";
-import { CHUNKS_DIR, EXPORTS_DIR, MEDIA_DIR, exportPath, trackChunksDir } from "../lib/storage.js";
+import { removeSessionFiles } from "../lib/cleanup.js";
+import { stopStream } from "../lib/streaming.js";
 
 const nameSchema = z.object({
   name: z.string().min(1).max(120),
@@ -113,6 +112,9 @@ export function registerStudioRoutes(app: FastifyInstance): void {
       return reply.code(403).send({ error: "Only a studio owner can delete it" });
     }
     // Collect media references before the row (and its cascades) disappear.
+    const sessionIds = (
+      db.prepare("SELECT id FROM sessions WHERE studio_id = ?").all(studioId) as { id: string }[]
+    ).map((s) => s.id);
     const tracks = db
       .prepare(
         `SELECT t.id FROM tracks t
@@ -123,29 +125,23 @@ export function registerStudioRoutes(app: FastifyInstance): void {
       .all(studioId) as { id: string }[];
     const exportRows = db
       .prepare(
-        `SELECT e.id, e.format FROM exports e
+        `SELECT e.id FROM exports e
          JOIN recordings r ON r.id = e.recording_id
          JOIN sessions s ON s.id = r.session_id
          WHERE s.studio_id = ?`
       )
-      .all(studioId) as { id: string; format: string }[];
+      .all(studioId) as { id: string }[];
+    // Live-stream pipelines write outside the DB — stop them, or ffmpeg would
+    // keep recreating files under data/live after the cleanup.
+    for (const sessionId of sessionIds) stopStream(sessionId); // no-op if not streaming
     db.prepare("DELETE FROM studios WHERE id = ?").run(studioId);
-    // Best-effort cleanup of on-disk media (DB rows are gone via ON DELETE CASCADE).
-    let mediaNames: string[] = [];
-    try {
-      mediaNames = fs.readdirSync(MEDIA_DIR);
-    } catch {
-      // media dir missing — nothing to clean
-    }
-    for (const t of tracks) {
-      fs.rmSync(trackChunksDir(t.id), { recursive: true, force: true });
-      for (const entry of mediaNames) {
-        if (entry.startsWith(`${t.id}.`)) fs.rmSync(path.join(MEDIA_DIR, entry), { force: true });
-      }
-    }
-    for (const e of exportRows) {
-      fs.rmSync(exportPath(e.id, e.format), { force: true });
-    }
+    // Best-effort cleanup of on-disk media (DB rows are gone via ON DELETE
+    // CASCADE): chunks, deliverables, exports with caption sidecars, HLS dirs.
+    removeSessionFiles(
+      sessionIds,
+      tracks.map((t) => t.id),
+      exportRows.map((e) => e.id)
+    );
     return { ok: true };
   });
 

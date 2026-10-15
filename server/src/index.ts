@@ -15,6 +15,7 @@ import { registerMediaRoutes } from "./routes/media.js";
 import { registerWsRoutes } from "./routes/ws.js";
 import { registerWatchRoutes } from "./routes/watch.js";
 import { recoverInterruptedJobs } from "./jobs/pipeline.js";
+import { sweepOrphanFiles } from "./lib/cleanup.js";
 import { livekitConfig, mintLivekitToken } from "./lib/livekit.js";
 import { participantFromRequest } from "./lib/auth.js";
 
@@ -103,6 +104,9 @@ app
     // Re-queue tracks/exports/transcripts interrupted by a restart or crash
     // so "processing" never hangs forever after a deploy.
     recoverInterruptedJobs();
+    // Delete on-disk artifacts of sessions removed before this boot —
+    // chunks, media and exports whose rows no longer exist, plus stale .tmp.
+    sweepOrphanFiles();
   })
   .catch((err) => {
     console.error(err);
