@@ -36,6 +36,10 @@ export type CaptureSettings = {
   cameraId: string | null;
   microphoneId: string | null;
   preset: QualityPreset;
+  /** Video bitrate (Mbps) chosen in the lobby; null → preset default. Affects
+   * only the local recording encoder (MediaRecorder target), never the live
+   * call — those are decoupled by design. */
+  videoBitrateMbps: number | null;
   echoCancellation: boolean; // "are you wearing headphones?" → off
   recordWav: boolean; // extra uncompressed 48kHz PCM audio track
 };

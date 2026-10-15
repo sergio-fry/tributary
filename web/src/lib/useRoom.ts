@@ -73,6 +73,9 @@ export function useRoom(config: RoomConfig) {
       sessionId: config.sessionId,
       participantToken: config.token,
       preset: config.preset,
+      videoBitrateBps: config.settings.videoBitrateMbps
+        ? Math.round(config.settings.videoBitrateMbps * 1_000_000)
+        : null,
       onAggregateHealth: (health) => {
         setMyUpload(health);
         const now = Date.now();

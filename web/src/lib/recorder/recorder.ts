@@ -24,26 +24,36 @@ export function pickMimeType(hasVideo: boolean): string | null {
 
 export type QualityPreset = "standard" | "high" | "ultra" | "audio";
 
-export function recorderBitrates(preset: QualityPreset): {
+/** Default video bitrates (Mbps) per quality preset — the lobby pre-fills its
+ * bitrate input from these and lets the user override the recording target. */
+export const PRESET_VIDEO_BITRATE_MBPS: Record<Exclude<QualityPreset, "audio">, number> = {
+  standard: 5,
+  high: 8,
+  ultra: 35, // 4K, device permitting — expect ~7× the upload volume of standard
+};
+
+export function recorderBitrates(
+  preset: QualityPreset,
+  videoBitrateOverrideBps?: number | null
+): {
   videoBitsPerSecond?: number;
   audioBitsPerSecond: number;
 } {
-  switch (preset) {
-    case "high":
-      return { videoBitsPerSecond: 8_000_000, audioBitsPerSecond: 128_000 };
-    case "ultra": // 4K, device permitting — expect ~7× the upload volume of standard
-      return { videoBitsPerSecond: 35_000_000, audioBitsPerSecond: 128_000 };
-    case "audio":
-      return { audioBitsPerSecond: 128_000 };
-    default:
-      return { videoBitsPerSecond: 5_000_000, audioBitsPerSecond: 128_000 };
-  }
+  const presetMbps = preset === "audio" ? null : PRESET_VIDEO_BITRATE_MBPS[preset];
+  const override = videoBitrateOverrideBps && videoBitrateOverrideBps > 0 ? videoBitrateOverrideBps : null;
+  return {
+    videoBitsPerSecond: override ?? (presetMbps !== null ? presetMbps * 1_000_000 : undefined),
+    audioBitsPerSecond: 128_000,
+  };
 }
 
 export type EngineOptions = {
   sessionId: string;
   participantToken: string;
   preset: QualityPreset;
+  /** Explicit video bitrate (bits/s) chosen in the lobby; overrides the preset
+   * default for the local recording encoder. Null/undefined → preset default. */
+  videoBitrateBps?: number | null;
   onAggregateHealth: (health: UploadHealth) => void;
   onError: (message: string) => void;
 };
@@ -131,7 +141,10 @@ export class RecordingEngine {
     });
 
     if (this.uploadsPaused) uploader.setPaused(true);
-    const bitrates = recorderBitrates(hasVideo ? this.opts.preset : "audio");
+    const bitrates = recorderBitrates(
+      hasVideo ? this.opts.preset : "audio",
+      hasVideo ? this.opts.videoBitrateBps : null
+    );
     const recorder = new MediaRecorder(stream, { mimeType, ...bitrates });
     const entry: ActiveTrack = {
       localId,

@@ -27,7 +27,8 @@ participant — plus mixed exports — no matter how rough the live connection w
 
 - **Studios → sessions → invite links.** Hosts sign up; guests join with one link, no account.
 - **Lobby / device check** — camera preview, mic level meter, camera/mic pickers, quality preset
-  (720p / 1080p / 4K / audio-only), "I'm wearing headphones" echo-cancellation toggle.
+  (720p / 1080p / 4K / audio-only) with a manual video-bitrate override for the local recording,
+  "I'm wearing headphones" echo-cancellation toggle.
 - **Live studio room** — mesh WebRTC (host + up to ~5 guests), tiles with mute/camera state,
   screen sharing, text chat, presence, reconnecting states, and a stall watchdog that rebuilds
   peer connections whose ICE agent never comes up.

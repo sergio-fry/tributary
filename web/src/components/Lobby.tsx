@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { buildConstraints, listDevices, watchMicLevel, type CaptureSettings, type DeviceInfo } from "../lib/media";
-import type { QualityPreset } from "../lib/recorder/recorder";
-import { Button, Card, Select } from "./ui";
+import { PRESET_VIDEO_BITRATE_MBPS, type QualityPreset } from "../lib/recorder/recorder";
+import { Button, Card, Input, Select } from "./ui";
 
 export type LobbyResult = { stream: MediaStream; settings: CaptureSettings };
 
@@ -27,6 +27,9 @@ export function Lobby({
   const [cameraId, setCameraId] = useState<string>("");
   const [microphoneId, setMicrophoneId] = useState<string>("");
   const [preset, setPreset] = useState<QualityPreset>("standard");
+  // Bitrate override in Mbps, pre-filled with the preset default; the user
+  // tunes it to trade local-recording quality against disk/upload volume.
+  const [bitrateInput, setBitrateInput] = useState(String(PRESET_VIDEO_BITRATE_MBPS.standard));
   const [headphones, setHeadphones] = useState(false);
   const [recordWav, setRecordWav] = useState(true);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -35,13 +38,29 @@ export function Lobby({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  const bitrateMbps = (() => {
+    const v = Number.parseFloat(bitrateInput);
+    // Garbage/empty input → null → fall back to the preset default.
+    return Number.isFinite(v) ? Math.min(100, Math.max(0.5, v)) : null;
+  })();
+  const effectiveBitrateMbps =
+    bitrateMbps ?? (preset === "audio" ? 0 : PRESET_VIDEO_BITRATE_MBPS[preset]);
+  const estimatedGbPerHour = (((effectiveBitrateMbps + 0.128) * 1_000_000 * 3600) / 8 / 1e9).toFixed(1);
+
   const settings: CaptureSettings = {
     cameraId: cameraId || null,
     microphoneId: microphoneId || null,
     preset,
+    videoBitrateMbps: preset === "audio" ? null : bitrateMbps,
     echoCancellation: !headphones,
     recordWav,
   };
+
+  // Switching presets re-targets the bitrate to that preset's default; the
+  // user is free to edit it afterwards.
+  useEffect(() => {
+    if (preset !== "audio") setBitrateInput(String(PRESET_VIDEO_BITRATE_MBPS[preset]));
+  }, [preset]);
 
   useEffect(() => {
     let cancelled = false;
@@ -157,6 +176,27 @@ export function Lobby({
                   { value: "audio", label: "Audio only" },
                 ]}
               />
+              {preset !== "audio" && (
+                <>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+                    Video bitrate (Mbps)
+                  </label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min={0.5}
+                    max={100}
+                    step={0.5}
+                    value={bitrateInput}
+                    onChange={(e) => setBitrateInput(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500">
+                    Encoder target for your local recording, independent of the preset's resolution —{" "}
+                    ≈{estimatedGbPerHour} GB per hour incl. audio. Lower it to shrink the upload or
+                    disk footprint.
+                  </p>
+                </>
+              )}
             </>
           )}
           <label className="mt-1 flex items-center gap-2 text-sm text-gray-300">

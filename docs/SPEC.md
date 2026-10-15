@@ -121,8 +121,10 @@ re-queue as `uploaded` while retrying).
 ## 5. Quality presets
 
 Lobby/room capture constraints: Standard 720p30 (default), High 1080p30, Audio-only. MediaRecorder
-bitrates: 5 Mbps video @720p, 8 Mbps @1080p, 128 kbps Opus audio. WAV is extracted server-side
-from Opus for post-production convenience (true PCM capture deferred).
+bitrates: 5 Mbps video @720p, 8 Mbps @1080p, 128 kbps Opus audio. The lobby also exposes a manual
+video-bitrate field (Mbps, pre-filled with the preset default) that overrides the preset bitrate
+for the local recording — resolution and bitrate are therefore independently controllable. WAV is
+extracted server-side from Opus for post-production convenience (true PCM capture deferred).
 
 ## 6. Security
 
