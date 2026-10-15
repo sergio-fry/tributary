@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { UploadHealth } from "../lib/recorder/upload-manager";
 import { watchMicLevel } from "../lib/media";
 import { Badge } from "./ui";
-import { MicOffIcon } from "./icons";
+import { MicIcon, MicOffIcon } from "./icons";
 
 /** Raw sample peak at or above this reads as full scale — digital clipping. */
 const CLIP_THRESHOLD = 0.99;
@@ -49,6 +49,7 @@ export function VideoTile({
   micOn,
   camOn,
   isSelf,
+  micLabel,
   upload,
   large,
   onHostMute,
@@ -59,6 +60,8 @@ export function VideoTile({
   micOn?: boolean;
   camOn?: boolean;
   isSelf?: boolean;
+  /** Selected microphone label (announced over signaling) — shown under the name. */
+  micLabel?: string | null;
   upload?: UploadHealth | null;
   large?: boolean;
   /** Present when the local user is a host viewing a guest tile. */
@@ -147,29 +150,40 @@ export function VideoTile({
           </div>
         </div>
       )}
-      <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5">
-        {clipping && (
+      <div className="absolute bottom-2.5 left-2.5 flex max-w-[calc(100%-1.25rem)] flex-col items-start gap-1">
+        <div className="flex items-center gap-1.5">
+          {clipping && (
+            <span
+              title="Full-scale samples detected — this input is clipping. Ask to lower gain or move back from the mic."
+              className="animate-pulse rounded-full bg-rec px-2 py-1 text-[10px] font-bold leading-none tracking-wide text-white"
+            >
+              CLIP
+            </span>
+          )}
+          {micOn === false && (
+            <span
+              role="img"
+              aria-label={`${name} is muted`}
+              title={`${name} is muted`}
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-rec text-white"
+            >
+              <MicOffIcon width={13} height={13} />
+            </span>
+          )}
+          <span className="rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm">
+            {name}
+            {isSelf ? " (you)" : ""}
+          </span>
+        </div>
+        {micLabel && (
           <span
-            title="Full-scale samples detected — this input is clipping. Ask to lower gain or move back from the mic."
-            className="animate-pulse rounded-full bg-rec px-2 py-1 text-[10px] font-bold leading-none tracking-wide text-white"
+            title={micLabel}
+            className="flex max-w-full items-center gap-1 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-gray-300 backdrop-blur-sm"
           >
-            CLIP
+            <MicIcon width={10} height={10} className="shrink-0 text-gray-400" />
+            <span className="truncate">{micLabel}</span>
           </span>
         )}
-        {micOn === false && (
-          <span
-            role="img"
-            aria-label={`${name} is muted`}
-            title={`${name} is muted`}
-            className="flex h-6 w-6 items-center justify-center rounded-full bg-rec text-white"
-          >
-            <MicOffIcon width={13} height={13} />
-          </span>
-        )}
-        <span className="rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm">
-          {name}
-          {isSelf ? " (you)" : ""}
-        </span>
       </div>
       {meter && <LevelMeter level={meter.level} peakHold={meter.peakHold} clipping={clipping} />}
       {upload && upload.state !== "complete" && (

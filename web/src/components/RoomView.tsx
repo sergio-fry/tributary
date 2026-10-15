@@ -362,6 +362,7 @@ export function RoomView({
               isSelf
               micOn={room.micOn}
               camOn={room.camOn}
+              micLabel={room.myDevices.mic}
               upload={room.myUpload}
             />
             {room.peers.map((p) => (
@@ -371,6 +372,7 @@ export function RoomView({
                 name={p.name}
                 micOn={p.state.mic}
                 camOn={p.state.cam}
+                micLabel={p.devices?.mic ?? null}
                 upload={p.upload}
                 onHostMute={config.isHost ? () => room.muteGuest(p.participantId) : undefined}
               />
