@@ -30,7 +30,9 @@ export function Lobby({
   // Bitrate override in Mbps, pre-filled with the preset default; the user
   // tunes it to trade local-recording quality against disk/upload volume.
   const [bitrateInput, setBitrateInput] = useState(String(PRESET_VIDEO_BITRATE_MBPS.standard));
-  const [headphones, setHeadphones] = useState(false);
+  // Headphones on by default: most studio participants wear them, and it keeps
+  // echo cancellation off (cleaner local capture) until the user opts out.
+  const [headphones, setHeadphones] = useState(true);
   const [recordWav, setRecordWav] = useState(true);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
